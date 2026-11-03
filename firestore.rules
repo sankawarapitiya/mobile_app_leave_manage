@@ -1,0 +1,74 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Organizations and partitioned data
+    match /organizations/{orgId} {
+      allow read: if true;
+      allow write: if false;
+
+      match /attendance/{docId} {
+        allow read: if true;
+        allow write: if false;
+      }
+
+      match /employees/{userId} {
+        allow read: if true;
+        allow write: if false;
+      }
+
+      match /system_users/{userId} {
+        allow read: if true;
+        allow write: if false;
+      }
+
+      // Mobile app users registered under organization with biometric Fingerprint ID
+      match /mobile_app_users/{userId} {
+        allow read, write: if true;
+      }
+
+      match /holidays/{holidayId} {
+        allow read: if true;
+        allow write: if false;
+      }
+
+      match /working_shifts/{shiftId} {
+        allow read: if true;
+        allow write: if false;
+      }
+
+      match /users/{userId} {
+        allow read, write: if true;
+      }
+    }
+
+    // Leave Management Collections
+    match /leave_requests/{requestId} {
+      allow read, write: if true;
+    }
+
+    match /leave_balances/{userId} {
+      allow read, write: if true;
+    }
+
+    match /company_holidays/{id} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+
+    // Legacy attendance_records collection
+    match /attendance_records/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // System Health & Diagnostics
+    match /_system_health/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+  }
+}
