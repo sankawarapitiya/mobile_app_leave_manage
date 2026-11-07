@@ -45,7 +45,7 @@ export const palette = {
       lightBg: 'rgba(139, 92, 246, 0.12)',
       label: 'Unpaid Leave',
     },
-  },
+  } as Record<string, { color: string; lightBg: string; label: string }>,
 };
 
 export const lightColors = {

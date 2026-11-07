@@ -65,9 +65,53 @@ export interface LeaveBalanceCategory {
   pending: number;
 }
 
+export interface EmployeeLeaveBalanceItem {
+  leaveTypeId: number | string;
+  leaveTypeName: string;
+  code: string;
+  allocatedDays: number;
+  carriedForwardDays?: number;
+  usedDays: number;
+  remainingDays: number;
+  notes?: string;
+  color?: string;
+  isPaid?: boolean;
+  pendingDays?: number;
+}
+
+export interface CloudLeaveType {
+  id: number | string;
+  name: string;
+  code: string;
+  daysAllowed: number;
+  carryForwardDays?: number;
+  isPaid: boolean;
+  color: string;
+  description?: string;
+}
+
+export interface CloudLeaveCategory {
+  id: number | string;
+  name: string;
+  description?: string;
+  color?: string;
+  isDefault?: boolean;
+  organizationId?: string;
+  leaveTypes: CloudLeaveType[];
+  syncedAt?: any;
+}
+
 export interface UserLeaveBalances {
   userId: string;
+  rawUserId?: string;
+  name?: string;
+  department?: string;
+  organizationId?: string;
   year: number;
+  leaveCategoryId?: number | string;
+  leaveCategoryName?: string;
+  leaveCategoryColor?: string;
+  balances?: EmployeeLeaveBalanceItem[];
   annual: LeaveBalanceCategory;
   sick: LeaveBalanceCategory;
   casual: LeaveBalanceCategory;
@@ -75,9 +119,10 @@ export interface UserLeaveBalances {
     used: number;
   };
   updatedAt: string;
+  [key: string]: any;
 }
 
-export type LeaveType = 'annual' | 'sick' | 'casual' | 'unpaid';
+export type LeaveType = 'annual' | 'sick' | 'casual' | 'unpaid' | string;
 
 export type HalfDayPeriod = 'first_half' | 'second_half';
 
@@ -86,10 +131,17 @@ export type LeaveRequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelle
 export interface LeaveRequest {
   id: string;
   userId: string;
+  rawUserId?: string;
+  fingerprintId?: string;
+  organizationId?: string;
   userName: string;
   userAvatar?: string;
   department: string;
   leaveType: LeaveType;
+  leaveTypeId?: number | string;
+  leaveTypeCode?: string;
+  leaveTypeName?: string;
+  leaveColor?: string;
   startDate: string; // YYYY-MM-DD
   endDate: string;   // YYYY-MM-DD
   isHalfDay: boolean;

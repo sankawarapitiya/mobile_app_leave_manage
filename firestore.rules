@@ -36,6 +36,14 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      match /leave_categories/{catId} {
+        allow read, write: if true;
+      }
+
+      match /leave_balances/{userId} {
+        allow read, write: if true;
+      }
+
       match /users/{userId} {
         allow read, write: if true;
       }

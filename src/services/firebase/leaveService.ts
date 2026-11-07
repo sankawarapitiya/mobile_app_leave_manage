@@ -16,6 +16,9 @@ import { DEFAULT_ORG_ID } from './authService';
 import {
   LeaveRequest,
   UserLeaveBalances,
+  EmployeeLeaveBalanceItem,
+  CloudLeaveType,
+  CloudLeaveCategory,
   CompanyHoliday,
   LeaveType,
 } from '../../types';
@@ -38,6 +41,106 @@ const listeners: Set<() => void> = new Set();
 const notifyListeners = () => {
   listeners.forEach((listener) => listener());
 };
+
+/**
+ * Normalizes cloud leave balance document from organizations/{orgId}/leave_balances or leave_balances
+ */
+export function normalizeCloudLeaveBalances(data: any, fallbackUserId: string): UserLeaveBalances {
+  const year = data.year || new Date().getFullYear();
+  const balancesArray: EmployeeLeaveBalanceItem[] = Array.isArray(data.balances)
+    ? data.balances.map((b: any) => ({
+        leaveTypeId: b.leaveTypeId ?? b.id ?? b.leave_type_id ?? '',
+        leaveTypeName: b.leaveTypeName || b.name || b.leave_type_name || 'Leave',
+        code: (b.code || b.leave_type_code || '').toUpperCase(),
+        allocatedDays: Number(b.allocatedDays ?? b.allocated_days ?? b.daysAllowed ?? 0),
+        carriedForwardDays: Number(b.carriedForwardDays ?? b.carried_forward_days ?? 0),
+        usedDays: Number(b.usedDays ?? b.used_days ?? 0),
+        remainingDays: Number(b.remainingDays ?? b.remaining_days ?? 0),
+        notes: b.notes || '',
+        color: b.color || b.leave_type_color || '#2563eb',
+        isPaid: Boolean(b.isPaid ?? b.is_paid ?? true),
+        pendingDays: Number(b.pendingDays ?? 0),
+      }))
+    : [];
+
+  // Match items for standard categories
+  const casualItem = balancesArray.find(
+    (b) => b.code === 'CAS' || b.leaveTypeName.toLowerCase().includes('casual')
+  );
+  const sickItem = balancesArray.find(
+    (b) =>
+      b.code === 'MED' ||
+      b.code === 'SICK' ||
+      b.leaveTypeName.toLowerCase().includes('sick') ||
+      b.leaveTypeName.toLowerCase().includes('medical')
+  );
+  const annualItem = balancesArray.find(
+    (b) =>
+      b.code === 'VAC' ||
+      b.code === 'ANNUAL' ||
+      b.leaveTypeName.toLowerCase().includes('annual') ||
+      b.leaveTypeName.toLowerCase().includes('vacation')
+  );
+  const unpaidItem = balancesArray.find(
+    (b) => b.code === 'UNPAID' || b.leaveTypeName.toLowerCase().includes('unpaid')
+  );
+
+  const casualTotal = casualItem
+    ? casualItem.allocatedDays + (casualItem.carriedForwardDays || 0)
+    : data.casual?.total ?? 5;
+  const casualUsed = casualItem ? casualItem.usedDays : data.casual?.used ?? 0;
+  const casualPending = casualItem ? (casualItem.pendingDays || 0) : data.casual?.pending ?? 0;
+
+  const sickTotal = sickItem
+    ? sickItem.allocatedDays + (sickItem.carriedForwardDays || 0)
+    : data.sick?.total ?? 10;
+  const sickUsed = sickItem ? sickItem.usedDays : data.sick?.used ?? 0;
+  const sickPending = sickItem ? (sickItem.pendingDays || 0) : data.sick?.pending ?? 0;
+
+  const annualTotal = annualItem
+    ? annualItem.allocatedDays + (annualItem.carriedForwardDays || 0)
+    : data.annual?.total ?? 20;
+  const annualUsed = annualItem ? annualItem.usedDays : data.annual?.used ?? 0;
+  const annualPending = annualItem ? (annualItem.pendingDays || 0) : data.annual?.pending ?? 0;
+
+  const unpaidUsed = unpaidItem ? unpaidItem.usedDays : data.unpaid?.used ?? 0;
+
+  return {
+    userId: data.userId || fallbackUserId,
+    rawUserId: data.rawUserId || data.userId || fallbackUserId,
+    name: data.name,
+    department: data.department,
+    organizationId: data.organizationId,
+    year,
+    leaveCategoryId: data.leaveCategoryId,
+    leaveCategoryName: data.leaveCategoryName,
+    leaveCategoryColor: data.leaveCategoryColor,
+    balances: balancesArray.length > 0 ? balancesArray : undefined,
+    annual: {
+      total: annualTotal,
+      used: annualUsed,
+      pending: annualPending,
+    },
+    sick: {
+      total: sickTotal,
+      used: sickUsed,
+      pending: sickPending,
+    },
+    casual: {
+      total: casualTotal,
+      used: casualUsed,
+      pending: casualPending,
+    },
+    unpaid: {
+      used: unpaidUsed,
+    },
+    updatedAt: data.updatedAt
+      ? typeof data.updatedAt === 'object' && data.updatedAt.toDate
+        ? data.updatedAt.toDate().toISOString()
+        : String(data.updatedAt)
+      : new Date().toISOString(),
+  };
+}
 
 export const leaveService = {
   /**
@@ -120,14 +223,22 @@ export const leaveService = {
   },
 
   /**
-   * Subscribe to employee's leave balance
+   * Subscribe to employee's real-time leave balance and leave types from Cloud Firestore
    */
   subscribeToUserBalances: (
     userId: string,
-    onData: (balances: UserLeaveBalances) => void
+    onData: (balances: UserLeaveBalances) => void,
+    orgId?: string,
+    fingerprintId?: string
   ): Unsubscribe => {
+    const primaryId = String(fingerprintId || '').trim();
+    const fallbackId = String(userId || '').trim().replace('emp_', '');
+    const targetId = primaryId || fallbackId;
+    const targetOrg = (orgId || DEFAULT_ORG_ID).trim().toUpperCase();
+
     const defaultBalance: UserLeaveBalances = {
-      userId,
+      userId: targetId,
+      rawUserId: targetId,
       year: new Date().getFullYear(),
       annual: { total: 20, used: 0, pending: 0 },
       sick: { total: 10, used: 0, pending: 0 },
@@ -136,9 +247,10 @@ export const leaveService = {
       updatedAt: new Date().toISOString(),
     };
 
-    if (!isFirebaseConfigured || !db) {
+    const firestore = db;
+    if (!isFirebaseConfigured || !firestore) {
       const emit = () => {
-        const bal = localBalances[userId] || defaultBalance;
+        const bal = localBalances[targetId] || localBalances[userId] || defaultBalance;
         onData(bal);
       };
       emit();
@@ -147,23 +259,112 @@ export const leaveService = {
     }
 
     try {
-      const docRef = doc(db, 'leave_balances', userId);
-      return onSnapshot(
-        docRef,
+      // First try root leave_balances/{targetId}
+      const rootDocRef = doc(firestore, 'leave_balances', targetId);
+      const unsubRoot = onSnapshot(
+        rootDocRef,
         (snapshot) => {
           if (snapshot.exists()) {
-            onData(snapshot.data() as UserLeaveBalances);
+            const normalized = normalizeCloudLeaveBalances(snapshot.data(), targetId);
+            onData(normalized);
           } else {
-            onData(defaultBalance);
+            // Check organization partitioned collection: organizations/{orgId}/leave_balances/{targetId}
+            getDocs(query(collection(firestore, 'organizations', targetOrg, 'leave_balances'), where('rawUserId', '==', targetId), limit(1)))
+              .then((qSnap) => {
+                if (!qSnap.empty) {
+                  onData(normalizeCloudLeaveBalances(qSnap.docs[0].data(), targetId));
+                } else {
+                  onData(defaultBalance);
+                }
+              })
+              .catch(() => {
+                onData(defaultBalance);
+              });
           }
         },
         (error) => {
-          console.warn('[Firestore] subscribeToUserBalances fallback:', error);
-          onData(localBalances[userId] || defaultBalance);
+          console.warn('[Firestore] subscribeToUserBalances root fallback, trying org path:', error.message);
+          // Fallback to org partitioned path
+          try {
+            const orgDocRef = doc(firestore, 'organizations', targetOrg, 'leave_balances', targetId);
+            onSnapshot(
+              orgDocRef,
+              (orgSnap) => {
+                if (orgSnap.exists()) {
+                  onData(normalizeCloudLeaveBalances(orgSnap.data(), targetId));
+                } else {
+                  onData(localBalances[targetId] || defaultBalance);
+                }
+              },
+              () => onData(localBalances[targetId] || defaultBalance)
+            );
+          } catch {
+            onData(localBalances[targetId] || defaultBalance);
+          }
+        }
+      );
+
+      return unsubRoot;
+    } catch (err) {
+      console.warn('[Firestore] subscribeToUserBalances failed:', err);
+      onData(localBalances[targetId] || defaultBalance);
+      return () => {};
+    }
+  },
+
+  /**
+   * Subscribe to organization leave categories and configured leave types from Cloud Firestore
+   */
+  subscribeToLeaveCategories: (
+    orgId: string,
+    onData: (categories: CloudLeaveCategory[]) => void
+  ): Unsubscribe => {
+    const targetOrg = (orgId || DEFAULT_ORG_ID).trim().toUpperCase();
+    const firestore = db;
+    if (!isFirebaseConfigured || !firestore) {
+      onData([]);
+      return () => {};
+    }
+
+    try {
+      const colRef = collection(firestore, 'organizations', targetOrg, 'leave_categories');
+      return onSnapshot(
+        colRef,
+        (snapshot) => {
+          const list: CloudLeaveCategory[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data();
+            list.push({
+              id: data.id ?? docSnap.id,
+              name: data.name || '',
+              description: data.description || '',
+              color: data.color || '#2563eb',
+              isDefault: Boolean(data.isDefault),
+              organizationId: targetOrg,
+              leaveTypes: Array.isArray(data.leaveTypes)
+                ? data.leaveTypes.map((t: any) => ({
+                    id: t.id ?? '',
+                    name: t.name || '',
+                    code: (t.code || '').toUpperCase(),
+                    daysAllowed: Number(t.daysAllowed ?? t.days_allowed ?? 0),
+                    carryForwardDays: Number(t.carryForwardDays ?? t.carry_forward_days ?? 0),
+                    isPaid: Boolean(t.isPaid ?? t.is_paid ?? true),
+                    color: t.color || '#2563eb',
+                    description: t.description || '',
+                  }))
+                : [],
+              syncedAt: data.syncedAt,
+            });
+          });
+          onData(list);
+        },
+        (err) => {
+          console.warn('[Firestore] subscribeToLeaveCategories notice:', err.message);
+          onData([]);
         }
       );
     } catch {
-      onData(localBalances[userId] || defaultBalance);
+      onData([]);
       return () => {};
     }
   },
@@ -444,28 +645,58 @@ export const leaveService = {
 
     try {
       await runTransaction(firestore, async (transaction) => {
-        const balanceDocRef = doc(firestore, 'leave_balances', reqData.userId);
-        const balanceSnap = await transaction.get(balanceDocRef);
+        const targetBalId = String(reqData.fingerprintId || reqData.rawUserId || reqData.userId).trim();
+        const targetOrg = (reqData.organizationId || DEFAULT_ORG_ID).trim().toUpperCase();
 
+        const rootBalRef = doc(firestore, 'leave_balances', targetBalId);
+        const orgBalRef = doc(firestore, 'organizations', targetOrg, 'leave_balances', targetBalId);
+
+        let balanceSnap = await transaction.get(rootBalRef);
+        let activeBalRef = rootBalRef;
         if (!balanceSnap.exists()) {
-          throw new Error('Leave balance profile not found.');
+          balanceSnap = await transaction.get(orgBalRef);
+          activeBalRef = orgBalRef;
         }
 
-        const balanceData = balanceSnap.data() as UserLeaveBalances;
+        if (balanceSnap.exists()) {
+          const balanceData = balanceSnap.data() as any;
 
-        if (reqData.leaveType !== 'unpaid') {
-          const category = balanceData[reqData.leaveType];
-          const available = category.total - category.used - category.pending;
-
-          if (reqData.totalDays > available) {
-            throw new Error(
-              `Insufficient ${reqData.leaveType} balance. Available: ${available} days, Requested: ${reqData.totalDays} days.`
+          // If structured balances array exists, check quota & add to pendingDays
+          if (Array.isArray(balanceData.balances)) {
+            const item = balanceData.balances.find(
+              (b: any) =>
+                (reqData.leaveTypeId && String(b.leaveTypeId) === String(reqData.leaveTypeId)) ||
+                (reqData.leaveTypeCode && b.code === reqData.leaveTypeCode) ||
+                (reqData.leaveType && (b.code === reqData.leaveType.toUpperCase() || b.leaveTypeName.toLowerCase() === reqData.leaveType.toLowerCase()))
             );
+            if (item) {
+              const totalDays = item.allocatedDays + (item.carriedForwardDays || 0);
+              const available = totalDays > 0 ? Math.max(0, item.remainingDays - (item.pendingDays || 0)) : 999;
+              if (totalDays > 0 && reqData.totalDays > available) {
+                throw new Error(
+                  `Insufficient ${item.leaveTypeName} balance. Available: ${available} days, Requested: ${reqData.totalDays} days.`
+                );
+              }
+              item.pendingDays = (item.pendingDays || 0) + reqData.totalDays;
+            }
           }
 
-          category.pending += reqData.totalDays;
+          if (reqData.leaveType !== 'unpaid' && balanceData[reqData.leaveType]) {
+            const category = balanceData[reqData.leaveType];
+            const available = category.total - category.used - category.pending;
+            if (reqData.totalDays > available && category.total > 0) {
+              throw new Error(
+                `Insufficient ${reqData.leaveType} balance. Available: ${available} days, Requested: ${reqData.totalDays} days.`
+              );
+            }
+            category.pending = (category.pending || 0) + reqData.totalDays;
+          }
+
           balanceData.updatedAt = new Date().toISOString();
-          transaction.set(balanceDocRef, balanceData);
+          transaction.set(activeBalRef, balanceData, { merge: true });
+          if (activeBalRef === rootBalRef) {
+            transaction.set(orgBalRef, balanceData, { merge: true });
+          }
         }
 
         const requestDocRef = doc(collection(firestore, 'leave_requests'));
@@ -493,7 +724,7 @@ export const leaveService = {
         target.status = 'cancelled';
         if (target.leaveType !== 'unpaid' && localBalances[userId]) {
           const cat = localBalances[userId][target.leaveType];
-          cat.pending = Math.max(0, cat.pending - target.totalDays);
+          if (cat) cat.pending = Math.max(0, cat.pending - target.totalDays);
         }
       }
       notifyListeners();
@@ -513,14 +744,39 @@ export const leaveService = {
         }
 
         // Restore pending balance
-        if (req.leaveType !== 'unpaid') {
-          const balanceDocRef = doc(firestore, 'leave_balances', userId);
-          const balSnap = await transaction.get(balanceDocRef);
-          if (balSnap.exists()) {
-            const bal = balSnap.data() as UserLeaveBalances;
-            bal[req.leaveType].pending = Math.max(0, bal[req.leaveType].pending - req.totalDays);
-            bal.updatedAt = new Date().toISOString();
-            transaction.set(balanceDocRef, bal);
+        const targetBalId = String(req.fingerprintId || req.rawUserId || req.userId).trim();
+        const targetOrg = (req.organizationId || DEFAULT_ORG_ID).trim().toUpperCase();
+
+        const rootBalRef = doc(firestore, 'leave_balances', targetBalId);
+        const orgBalRef = doc(firestore, 'organizations', targetOrg, 'leave_balances', targetBalId);
+
+        let balanceSnap = await transaction.get(rootBalRef);
+        let activeBalRef = rootBalRef;
+        if (!balanceSnap.exists()) {
+          balanceSnap = await transaction.get(orgBalRef);
+          activeBalRef = orgBalRef;
+        }
+
+        if (balanceSnap.exists()) {
+          const bal = balanceSnap.data() as any;
+          if (Array.isArray(bal.balances)) {
+            const item = bal.balances.find(
+              (b: any) =>
+                (req.leaveTypeId && String(b.leaveTypeId) === String(req.leaveTypeId)) ||
+                (req.leaveTypeCode && b.code === req.leaveTypeCode) ||
+                (req.leaveType && (b.code === req.leaveType.toUpperCase() || b.leaveTypeName.toLowerCase() === req.leaveType.toLowerCase()))
+            );
+            if (item) {
+              item.pendingDays = Math.max(0, (item.pendingDays || 0) - req.totalDays);
+            }
+          }
+          if (req.leaveType !== 'unpaid' && bal[req.leaveType]) {
+            bal[req.leaveType].pending = Math.max(0, (bal[req.leaveType].pending || 0) - req.totalDays);
+          }
+          bal.updatedAt = new Date().toISOString();
+          transaction.set(activeBalRef, bal, { merge: true });
+          if (activeBalRef === rootBalRef) {
+            transaction.set(orgBalRef, bal, { merge: true });
           }
         }
 
@@ -564,9 +820,11 @@ export const leaveService = {
           }
         } else {
           const cat = userBal[target.leaveType];
-          cat.pending = Math.max(0, cat.pending - target.totalDays);
-          if (decision === 'approved') {
-            cat.used += target.totalDays;
+          if (cat) {
+            cat.pending = Math.max(0, cat.pending - target.totalDays);
+            if (decision === 'approved') {
+              cat.used += target.totalDays;
+            }
           }
         }
         userBal.updatedAt = new Date().toISOString();
@@ -588,26 +846,57 @@ export const leaveService = {
           throw new Error('This request has already been reviewed.');
         }
 
-        const balanceDocRef = doc(firestore, 'leave_balances', reqData.userId);
-        const balanceSnap = await transaction.get(balanceDocRef);
+        const targetBalId = String(reqData.fingerprintId || reqData.rawUserId || reqData.userId).trim();
+        const targetOrg = (reqData.organizationId || DEFAULT_ORG_ID).trim().toUpperCase();
+
+        const rootBalRef = doc(firestore, 'leave_balances', targetBalId);
+        const orgBalRef = doc(firestore, 'organizations', targetOrg, 'leave_balances', targetBalId);
+
+        let balanceSnap = await transaction.get(rootBalRef);
+        let activeBalRef = rootBalRef;
+        if (!balanceSnap.exists()) {
+          balanceSnap = await transaction.get(orgBalRef);
+          activeBalRef = orgBalRef;
+        }
 
         if (balanceSnap.exists()) {
-          const bal = balanceSnap.data() as UserLeaveBalances;
+          const bal = balanceSnap.data() as any;
 
-          if (reqData.leaveType === 'unpaid') {
-            if (decision === 'approved') {
-              bal.unpaid.used += reqData.totalDays;
+          // Update dynamic balances array
+          if (Array.isArray(bal.balances)) {
+            const item = bal.balances.find(
+              (b: any) =>
+                (reqData.leaveTypeId && String(b.leaveTypeId) === String(reqData.leaveTypeId)) ||
+                (reqData.leaveTypeCode && b.code === reqData.leaveTypeCode) ||
+                (reqData.leaveType && (b.code === reqData.leaveType.toUpperCase() || b.leaveTypeName.toLowerCase() === reqData.leaveType.toLowerCase()))
+            );
+            if (item) {
+              item.pendingDays = Math.max(0, (item.pendingDays || 0) - reqData.totalDays);
+              if (decision === 'approved') {
+                item.usedDays = (item.usedDays || 0) + reqData.totalDays;
+                item.remainingDays = Math.max(0, (item.remainingDays || 0) - reqData.totalDays);
+              }
             }
-          } else {
+          }
+
+          // Update legacy categories
+          if (reqData.leaveType === 'unpaid') {
+            if (decision === 'approved' && bal.unpaid) {
+              bal.unpaid.used = (bal.unpaid.used || 0) + reqData.totalDays;
+            }
+          } else if (bal[reqData.leaveType]) {
             const cat = bal[reqData.leaveType];
-            cat.pending = Math.max(0, cat.pending - reqData.totalDays);
+            cat.pending = Math.max(0, (cat.pending || 0) - reqData.totalDays);
             if (decision === 'approved') {
-              cat.used += reqData.totalDays;
+              cat.used = (cat.used || 0) + reqData.totalDays;
             }
           }
 
           bal.updatedAt = new Date().toISOString();
-          transaction.set(balanceDocRef, bal);
+          transaction.set(activeBalRef, bal, { merge: true });
+          if (activeBalRef === rootBalRef) {
+            transaction.set(orgBalRef, bal, { merge: true });
+          }
         }
 
         transaction.update(reqDocRef, {

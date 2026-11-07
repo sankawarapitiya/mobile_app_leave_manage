@@ -339,7 +339,7 @@ export const TeamCalendarScreen: React.FC = () => {
                     style={[
                       styles.typePill,
                       {
-                        backgroundColor: typeConfig?.lightBg || colors.primaryLight,
+                        backgroundColor: req.leaveColor ? req.leaveColor + '20' : (typeConfig?.lightBg || colors.primaryLight),
                         borderRadius: borderRadius.full,
                       },
                     ]}
@@ -347,10 +347,10 @@ export const TeamCalendarScreen: React.FC = () => {
                     <Text
                       style={[
                         typography.caption,
-                        { color: typeConfig?.color || colors.primary, fontWeight: '700' },
+                        { color: req.leaveColor || typeConfig?.color || colors.primary, fontWeight: '700' },
                       ]}
                     >
-                      {req.leaveType.toUpperCase()}
+                      {req.leaveTypeName || typeConfig?.label || req.leaveType}
                     </Text>
                   </View>
                 </View>

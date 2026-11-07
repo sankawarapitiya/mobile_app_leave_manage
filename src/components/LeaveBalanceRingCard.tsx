@@ -13,25 +13,30 @@ import { LeaveType } from '../types';
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
 interface LeaveBalanceRingCardProps {
-  type: LeaveType;
+  type?: LeaveType;
   title: string;
+  code?: string;
   total: number;
   used: number;
-  pending: number;
+  pending?: number;
+  remaining?: number;
   accentColor: string;
+  isPaid?: boolean;
 }
 
 export const LeaveBalanceRingCard: React.FC<LeaveBalanceRingCardProps> = ({
   title,
+  code,
   total,
   used,
-  pending,
+  pending = 0,
+  remaining,
   accentColor,
 }) => {
   const { colors, typography, borderRadius, elevation, isDark } = useTheme();
 
-  const available = Math.max(0, total - used - pending);
-  const ratio = total > 0 ? Math.min(1, Math.max(0, available / total)) : 0;
+  const available = remaining !== undefined ? remaining : Math.max(0, total - used - pending);
+  const ratio = total > 0 ? Math.min(1, Math.max(0, available / total)) : (used > 0 ? 1 : 0);
 
   // SVG circular dimensions
   const size = 76;
@@ -73,30 +78,54 @@ export const LeaveBalanceRingCard: React.FC<LeaveBalanceRingCardProps> = ({
       <View style={styles.content}>
         {/* Left Side: Numbers and Details */}
         <View style={styles.infoCol}>
-          <Text
-            style={[
-              typography.caption,
-              styles.categoryTitle,
-              { color: accentColor },
-            ]}
-          >
-            {title}
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Text
+              style={[
+                typography.caption,
+                styles.categoryTitle,
+                { color: accentColor },
+              ]}
+              numberOfLines={1}
+            >
+              {title}
+            </Text>
+            {code ? (
+              <View
+                style={[
+                  styles.codeBadge,
+                  { backgroundColor: accentColor + '20', borderRadius: borderRadius.xs },
+                ]}
+              >
+                <Text style={[typography.caption, { color: accentColor, fontSize: 9, fontWeight: '700' }]}>
+                  {code}
+                </Text>
+              </View>
+            ) : null}
+          </View>
           <View style={styles.daysRow}>
             <Text style={[typography.kpiNumber, { color: colors.textPrimary }]}>
-              {available}
+              {total > 0 ? available : used}
             </Text>
             <Text style={[typography.body2, { color: colors.textSecondary, marginBottom: 2 }]}>
-              / {total} days
+              {total > 0 ? `/ ${total} days` : 'days used'}
             </Text>
           </View>
           <View style={styles.breakdownRow}>
-            <View style={styles.statPill}>
-              <View style={[styles.dot, { backgroundColor: colors.textTertiary }]} />
-              <Text style={[typography.caption, { color: colors.textSecondary }]}>
-                {used} used
-              </Text>
-            </View>
+            {total > 0 ? (
+              <View style={styles.statPill}>
+                <View style={[styles.dot, { backgroundColor: colors.textTertiary }]} />
+                <Text style={[typography.caption, { color: colors.textSecondary }]}>
+                  {used} used
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.statPill}>
+                <View style={[styles.dot, { backgroundColor: accentColor }]} />
+                <Text style={[typography.caption, { color: colors.textSecondary }]}>
+                  No Quota Limit
+                </Text>
+              </View>
+            )}
             {pending > 0 && (
               <View style={styles.statPill}>
                 <View style={[styles.dot, { backgroundColor: colors.warning }]} />
@@ -153,10 +182,10 @@ export const LeaveBalanceRingCard: React.FC<LeaveBalanceRingCardProps> = ({
             <Text
               style={[
                 typography.caption,
-                { color: colors.textPrimary, fontWeight: '700', fontSize: 13 },
+                { color: colors.textPrimary, fontWeight: '700', fontSize: total > 0 ? 13 : 11 },
               ]}
             >
-              {percentage}%
+              {total > 0 ? `${percentage}%` : 'Free'}
             </Text>
           </View>
         </View>
@@ -186,6 +215,11 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     fontWeight: '700',
     marginBottom: 2,
+  },
+  codeBadge: {
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    alignSelf: 'center',
   },
   daysRow: {
     flexDirection: 'row',

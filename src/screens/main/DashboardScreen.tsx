@@ -64,10 +64,16 @@ export const DashboardScreen: React.FC<{ navigation: any }> = ({ navigation }) =
     if (!user) return;
 
     setLoading(true);
-    // Subscribe to Balances
-    const unsubBalances = leaveService.subscribeToUserBalances(user.uid, (data) => {
-      setBalances(data);
-    });
+    // Subscribe to Balances (resolving cloud leave balances via fingerprintId / rawUserId / uid)
+    const fpId = user.fingerprintId || user.fingerprint_id || user.rawUserId;
+    const unsubBalances = leaveService.subscribeToUserBalances(
+      user.uid,
+      (data) => {
+        setBalances(data);
+      },
+      user.orgId || currentOrgId,
+      fpId
+    );
 
     // Subscribe to User Leave Requests
     const unsubRequests = leaveService.subscribeToUserRequests(user.uid, (data) => {
@@ -176,11 +182,41 @@ export const DashboardScreen: React.FC<{ navigation: any }> = ({ navigation }) =
             {/* KPI Leave Balance Cards Section */}
             <View style={styles.sectionHeaderRow}>
               <View>
-                <Text style={[typography.h3, { color: colors.textPrimary }]}>
-                  Leave Balances
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={[typography.h3, { color: colors.textPrimary }]}>
+                    Leave Balances
+                  </Text>
+                  {balances?.leaveCategoryName ? (
+                    <View
+                      style={[
+                        styles.catBadge,
+                        {
+                          backgroundColor: (balances.leaveCategoryColor || colors.primary) + '20',
+                          borderColor: balances.leaveCategoryColor || colors.primary,
+                          borderRadius: borderRadius.sm,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          typography.caption,
+                          {
+                            color: balances.leaveCategoryColor || colors.primary,
+                            fontWeight: '700',
+                            fontSize: 10,
+                          },
+                        ]}
+                      >
+                        {balances.leaveCategoryName}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
                 <Text style={[typography.caption, { color: colors.textSecondary }]}>
                   Allowance for Year {balances?.year || 2026}
+                  {balances?.balances && balances.balances.length > 0
+                    ? ` • ${balances.balances.length} Types Active`
+                    : ''}
                 </Text>
               </View>
 
@@ -201,46 +237,84 @@ export const DashboardScreen: React.FC<{ navigation: any }> = ({ navigation }) =
               </Pressable>
             </View>
 
-            {/* 2x2 Leave Balance Grid */}
-            <View style={styles.balanceGrid}>
-              <View style={styles.gridRow}>
-                <LeaveBalanceRingCard
-                  type="annual"
-                  title="Annual"
-                  total={balances?.annual.total || 20}
-                  used={balances?.annual.used || 0}
-                  pending={balances?.annual.pending || 0}
-                  accentColor={palette.leaveTypes.annual.color}
-                />
-                <LeaveBalanceRingCard
-                  type="sick"
-                  title="Sick"
-                  total={balances?.sick.total || 10}
-                  used={balances?.sick.used || 0}
-                  pending={balances?.sick.pending || 0}
-                  accentColor={palette.leaveTypes.sick.color}
-                />
+            {/* Dynamic Leave Balance Grid from Cloud Firestore */}
+            {balances?.balances && balances.balances.length > 0 ? (
+              <View style={styles.balanceGrid}>
+                {Array.from({ length: Math.ceil(balances.balances.length / 2) }).map((_, rowIdx) => {
+                  const first = balances.balances![rowIdx * 2];
+                  const second = balances.balances![rowIdx * 2 + 1];
+                  return (
+                    <View key={`bal_row_${rowIdx}`} style={styles.gridRow}>
+                      <LeaveBalanceRingCard
+                        title={first.leaveTypeName}
+                        code={first.code}
+                        total={first.allocatedDays + (first.carriedForwardDays || 0)}
+                        used={first.usedDays}
+                        pending={first.pendingDays || 0}
+                        remaining={first.remainingDays}
+                        accentColor={first.color || colors.primary}
+                        isPaid={first.isPaid}
+                      />
+                      {second ? (
+                        <LeaveBalanceRingCard
+                          title={second.leaveTypeName}
+                          code={second.code}
+                          total={second.allocatedDays + (second.carriedForwardDays || 0)}
+                          used={second.usedDays}
+                          pending={second.pendingDays || 0}
+                          remaining={second.remainingDays}
+                          accentColor={second.color || colors.primary}
+                          isPaid={second.isPaid}
+                        />
+                      ) : (
+                        <View style={{ flex: 1, minWidth: 155 }} />
+                      )}
+                    </View>
+                  );
+                })}
               </View>
+            ) : (
+              /* Fallback 2x2 Leave Balance Grid */
+              <View style={styles.balanceGrid}>
+                <View style={styles.gridRow}>
+                  <LeaveBalanceRingCard
+                    type="annual"
+                    title="Annual"
+                    total={balances?.annual.total || 20}
+                    used={balances?.annual.used || 0}
+                    pending={balances?.annual.pending || 0}
+                    accentColor={palette.leaveTypes.annual.color}
+                  />
+                  <LeaveBalanceRingCard
+                    type="sick"
+                    title="Sick"
+                    total={balances?.sick.total || 10}
+                    used={balances?.sick.used || 0}
+                    pending={balances?.sick.pending || 0}
+                    accentColor={palette.leaveTypes.sick.color}
+                  />
+                </View>
 
-              <View style={styles.gridRow}>
-                <LeaveBalanceRingCard
-                  type="casual"
-                  title="Casual"
-                  total={balances?.casual.total || 5}
-                  used={balances?.casual.used || 0}
-                  pending={balances?.casual.pending || 0}
-                  accentColor={palette.leaveTypes.casual.color}
-                />
-                <LeaveBalanceRingCard
-                  type="unpaid"
-                  title="Unpaid"
-                  total={balances?.unpaid.used || 0}
-                  used={balances?.unpaid.used || 0}
-                  pending={0}
-                  accentColor={palette.leaveTypes.unpaid.color}
-                />
+                <View style={styles.gridRow}>
+                  <LeaveBalanceRingCard
+                    type="casual"
+                    title="Casual"
+                    total={balances?.casual.total || 5}
+                    used={balances?.casual.used || 0}
+                    pending={balances?.casual.pending || 0}
+                    accentColor={palette.leaveTypes.casual.color}
+                  />
+                  <LeaveBalanceRingCard
+                    type="unpaid"
+                    title="Unpaid"
+                    total={balances?.unpaid.used || 0}
+                    used={balances?.unpaid.used || 0}
+                    pending={0}
+                    accentColor={palette.leaveTypes.unpaid.color}
+                  />
+                </View>
               </View>
-            </View>
+            )}
 
             {/* Biometric Attendance (SpeedFace) Section */}
             <View style={styles.punchesSection}>
@@ -894,6 +968,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+  },
+  catBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderWidth: 1,
   },
   quickApplyBtn: {
     flexDirection: 'row',

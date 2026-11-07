@@ -34,8 +34,12 @@ export const LeaveRequestCard: React.FC<LeaveRequestCardProps> = ({
 }) => {
   const { colors, typography, borderRadius, elevation } = useTheme();
 
-  const typeConfig =
-    palette.leaveTypes[request.leaveType] || palette.leaveTypes.annual;
+  const fallbackConfig = palette.leaveTypes[request.leaveType] || palette.leaveTypes.annual;
+  const typeConfig = {
+    color: request.leaveColor || fallbackConfig.color,
+    lightBg: request.leaveColor ? request.leaveColor + '18' : fallbackConfig.lightBg,
+    label: request.leaveTypeName || fallbackConfig.label || request.leaveType,
+  };
 
   return (
     <Animated.View
