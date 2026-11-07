@@ -43,6 +43,29 @@ const notifyListeners = () => {
 };
 
 /**
+ * Recursively removes all `undefined` fields from an object so Firestore accepts it without error
+ */
+export function cleanFirestorePayload<T extends Record<string, any>>(obj: T): T {
+  if (!obj || typeof obj !== 'object' || obj instanceof Date) {
+    return obj;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map((item) => cleanFirestorePayload(item)) as unknown as T;
+  }
+  const cleaned: Record<string, any> = {};
+  for (const [key, val] of Object.entries(obj)) {
+    if (val !== undefined) {
+      if (val !== null && typeof val === 'object' && !(val instanceof Date)) {
+        cleaned[key] = cleanFirestorePayload(val);
+      } else {
+        cleaned[key] = val;
+      }
+    }
+  }
+  return cleaned as T;
+}
+
+/**
  * Normalizes cloud leave balance document from organizations/{orgId}/leave_balances or leave_balances
  */
 export function normalizeCloudLeaveBalances(data: any, fallbackUserId: string): UserLeaveBalances {
@@ -693,16 +716,16 @@ export const leaveService = {
           }
 
           balanceData.updatedAt = new Date().toISOString();
-          transaction.set(activeBalRef, balanceData, { merge: true });
+          transaction.set(activeBalRef, cleanFirestorePayload(balanceData), { merge: true });
           if (activeBalRef === rootBalRef) {
-            transaction.set(orgBalRef, balanceData, { merge: true });
+            transaction.set(orgBalRef, cleanFirestorePayload(balanceData), { merge: true });
           }
         }
 
         const requestDocRef = doc(collection(firestore, 'leave_requests'));
         const requestPayload = { ...newRequest };
         requestPayload.id = requestDocRef.id;
-        transaction.set(requestDocRef, requestPayload);
+        transaction.set(requestDocRef, cleanFirestorePayload(requestPayload));
       });
 
       return newId;
@@ -774,16 +797,16 @@ export const leaveService = {
             bal[req.leaveType].pending = Math.max(0, (bal[req.leaveType].pending || 0) - req.totalDays);
           }
           bal.updatedAt = new Date().toISOString();
-          transaction.set(activeBalRef, bal, { merge: true });
+          transaction.set(activeBalRef, cleanFirestorePayload(bal), { merge: true });
           if (activeBalRef === rootBalRef) {
-            transaction.set(orgBalRef, bal, { merge: true });
+            transaction.set(orgBalRef, cleanFirestorePayload(bal), { merge: true });
           }
         }
 
-        transaction.update(reqDocRef, {
+        transaction.update(reqDocRef, cleanFirestorePayload({
           status: 'cancelled',
           reviewedAt: new Date().toISOString(),
-        });
+        }));
       });
     } catch (err: any) {
       throw new Error(err.message || 'Failed to cancel leave request');
@@ -893,19 +916,19 @@ export const leaveService = {
           }
 
           bal.updatedAt = new Date().toISOString();
-          transaction.set(activeBalRef, bal, { merge: true });
+          transaction.set(activeBalRef, cleanFirestorePayload(bal), { merge: true });
           if (activeBalRef === rootBalRef) {
-            transaction.set(orgBalRef, bal, { merge: true });
+            transaction.set(orgBalRef, cleanFirestorePayload(bal), { merge: true });
           }
         }
 
-        transaction.update(reqDocRef, {
+        transaction.update(reqDocRef, cleanFirestorePayload({
           status: decision,
-          managerId,
-          managerName,
-          managerComment: comment,
+          managerId: managerId || '',
+          managerName: managerName || '',
+          managerComment: comment || '',
           reviewedAt: new Date().toISOString(),
-        });
+        }));
       });
     } catch (err: any) {
       console.error('[Firestore] reviewLeaveRequest error:', err);
