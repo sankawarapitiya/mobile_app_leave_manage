@@ -27,6 +27,7 @@ import {
 } from 'lucide-react-native';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAuthStore } from '../../store/useAuthStore';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { leaveService } from '../../services/firebase/leaveService';
 import {
   LeaveRequest,
@@ -43,6 +44,7 @@ import { palette } from '../../theme/colors';
 import { triggerHaptic } from '../../utils/haptics';
 
 export const DashboardScreen: React.FC<{ navigation: any }> = ({ navigation }) => {
+  const insets = useSafeAreaInsets();
   const { colors, typography, borderRadius, elevation } = useTheme();
   const {
     user,
@@ -125,7 +127,7 @@ export const DashboardScreen: React.FC<{ navigation: any }> = ({ navigation }) =
       <AnimatedHeader />
 
       <ScrollView
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: 100 }]}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 100 }]}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}

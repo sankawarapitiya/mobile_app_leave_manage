@@ -1,6 +1,7 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   LayoutDashboard,
   CalendarPlus,
@@ -31,6 +32,7 @@ export type MainTabParamList = {
 const Tab = createBottomTabNavigator<MainTabParamList>();
 
 export const MainTabNavigator: React.FC = () => {
+  const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
   const { activeRole, user } = useAuthStore();
 
@@ -39,8 +41,22 @@ export const MainTabNavigator: React.FC = () => {
     (user?.role || '').toLowerCase() === 'manager' ||
     (user?.designation || '').toLowerCase().includes('manager');
 
+  const isAndroid = Platform.OS === 'android';
+  const isIos = Platform.OS === 'ios';
+
+  // Dynamic bottom padding ensuring Android system navigation bar (3-button / gesture) & iOS Home Indicator never overlap tab items
+  const bottomInset = insets.bottom;
+  const paddingBottom = isIos
+    ? (bottomInset > 0 ? bottomInset : 8)
+    : Math.max(bottomInset, 12);
+
+  const tabBarHeight = isIos
+    ? (bottomInset > 0 ? 56 + bottomInset : 64)
+    : 58 + paddingBottom;
+
   return (
     <Tab.Navigator
+      safeAreaInsets={{ bottom: insets.bottom }}
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: colors.primary,
@@ -48,12 +64,19 @@ export const MainTabNavigator: React.FC = () => {
         tabBarStyle: {
           backgroundColor: colors.tabBarBg,
           borderTopColor: colors.tabBarBorder,
-          height: Platform.OS === 'ios' ? 88 : 68,
-          paddingBottom: Platform.OS === 'ios' ? 28 : 10,
-          paddingTop: 8,
+          height: tabBarHeight,
+          paddingBottom: paddingBottom,
+          paddingTop: 6,
           position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
           borderTopWidth: 1,
           elevation: 8,
+          shadowColor: colors.shadowColor,
+          shadowOffset: { width: 0, height: -2 },
+          shadowOpacity: 0.08,
+          shadowRadius: 4,
         },
         tabBarLabelStyle: {
           fontSize: 11,
