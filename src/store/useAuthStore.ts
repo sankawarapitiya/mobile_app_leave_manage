@@ -6,6 +6,7 @@ import {
   OrganizationInfo,
   AttendanceRecord,
   DailyAttendanceSummary,
+  EmployeeMobileAccess,
 } from '../types';
 import { authService, DEFAULT_ORG_ID, DEFAULT_ORG_NAME } from '../services/firebase/authService';
 import { MOCK_USERS } from '../services/mock/mockData';
@@ -24,7 +25,7 @@ interface AuthState {
   availableOrganizations: OrganizationInfo[];
   recentPunches: AttendanceRecord[];
   dailyAttendance: DailyAttendanceSummary[];
-  mobileAppUsers: UserProfile[];
+  mobileAppUsers: EmployeeMobileAccess[];
 
   initialize: () => Promise<void>;
   login: (identifier: string, password: string, orgId?: string) => Promise<void>;
@@ -55,6 +56,18 @@ interface AuthState {
   loadAvailableOrganizations: () => Promise<void>;
   loadRecentPunches: () => Promise<void>;
   loadMobileAppUsers: () => Promise<void>;
+  setEmployeeMobileAccess: (
+    employeeId: string,
+    enabled: boolean,
+    pin?: string,
+    role?: UserRole,
+    details?: Partial<EmployeeMobileAccess>
+  ) => Promise<void>;
+  setEmployeePin: (employeeId: string, pin: string) => Promise<void>;
+  updateEmployeeMobileDetails: (
+    employeeId: string,
+    updates: Partial<EmployeeMobileAccess>
+  ) => Promise<void>;
   updateMobileAppUser: (uid: string, updates: Partial<UserProfile>) => Promise<void>;
   deleteMobileAppUser: (uid: string) => Promise<void>;
   clearError: () => void;
@@ -311,6 +324,21 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
+  setEmployeeMobileAccess: async (employeeId, enabled, pin, role, details) => {
+    const orgId = get().currentOrgId || DEFAULT_ORG_ID;
+    await authService.setEmployeeMobileAccess(orgId, employeeId, enabled, pin, role, details);
+  },
+
+  setEmployeePin: async (employeeId, pin) => {
+    const orgId = get().currentOrgId || DEFAULT_ORG_ID;
+    await authService.setEmployeePin(orgId, employeeId, pin);
+  },
+
+  updateEmployeeMobileDetails: async (employeeId, updates) => {
+    const orgId = get().currentOrgId || DEFAULT_ORG_ID;
+    await authService.updateEmployeeMobileDetails(orgId, employeeId, updates);
+  },
+
   updateMobileAppUser: async (uid, updates) => {
     const orgId = get().currentOrgId || DEFAULT_ORG_ID;
     await authService.updateMobileAppUser(orgId, uid, updates);
@@ -320,7 +348,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const orgId = get().currentOrgId || DEFAULT_ORG_ID;
     await authService.deleteMobileAppUser(orgId, uid);
     set((state) => ({
-      mobileAppUsers: state.mobileAppUsers.filter((u) => u.uid !== uid),
+      mobileAppUsers: state.mobileAppUsers.filter((u) => u.userId !== uid && u.rawUserId !== uid),
     }));
   },
 

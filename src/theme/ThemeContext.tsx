@@ -1,13 +1,14 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { useColorScheme } from 'react-native';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo } from 'react';
+import { useColorScheme, StyleSheet } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { lightColors, darkColors, ThemeColors } from './colors';
+import { lightTheme, darkTheme, Theme, ThemeColors } from './colors';
 import { typography } from './typography';
 import { spacing, borderRadius, elevation } from './spacing';
 
 export type ColorSchemeType = 'light' | 'dark' | 'system';
 
-interface ThemeContextType {
+export interface ThemeContextType {
+  theme: Theme;
   colors: ThemeColors;
   typography: typeof typography;
   spacing: typeof spacing;
@@ -58,12 +59,13 @@ export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setColorSchemeMode(nextMode);
   };
 
-  const colors = isDark ? darkColors : lightColors;
+  const currentTheme = isDark ? darkTheme : lightTheme;
 
   return (
     <ThemeContext.Provider
       value={{
-        colors,
+        theme: currentTheme,
+        colors: currentTheme,
         typography,
         spacing,
         borderRadius,
@@ -86,3 +88,13 @@ export const useTheme = (): ThemeContextType => {
   }
   return context;
 };
+
+/**
+ * Utility hook to generate memoized StyleSheet styles based on the active theme
+ */
+export function useThemedStyles<T extends Record<string, any>>(
+  styleCreator: (theme: Theme) => T
+): T {
+  const { theme } = useTheme();
+  return useMemo(() => StyleSheet.create(styleCreator(theme)), [theme, styleCreator]);
+}

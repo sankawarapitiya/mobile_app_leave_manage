@@ -1,14 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
+  FlatList,
   Pressable,
   TextInput,
   Modal,
   Alert,
   ActivityIndicator,
+  Platform,
+  Switch,
 } from 'react-native';
 import {
   Users,
@@ -18,52 +20,75 @@ import {
   Fingerprint,
   Mail,
   Building,
-  BadgeCheck,
   Edit2,
-  Trash2,
   X,
   Check,
   CheckCircle2,
   RefreshCw,
   AlertTriangle,
+  Key,
+  Eye,
+  EyeOff,
+  Sliders,
+  CheckCircle,
+  XCircle,
+  Phone,
+  Sparkles,
 } from 'lucide-react-native';
 import { useTheme } from '../theme/ThemeContext';
 import { useAuthStore } from '../store/useAuthStore';
-import { UserProfile, UserRole } from '../types';
+import { EmployeeMobileAccess, UserRole } from '../types';
 import { CustomButton } from './CustomButton';
 import { triggerHaptic } from '../utils/haptics';
 
-export const MobileUsersManagement: React.FC = () => {
-  const { colors, typography, borderRadius, elevation } = useTheme();
+export interface MobileUsersManagementProps {
+  headerPrefix?: React.ReactNode;
+  contentContainerStyle?: any;
+}
+
+export const MobileUsersManagement: React.FC<MobileUsersManagementProps> = ({
+  headerPrefix,
+  contentContainerStyle,
+}) => {
+  const { colors, typography, borderRadius, elevation, isDark } = useTheme();
   const {
     user: currentUser,
     currentOrgId,
     currentOrgName,
     mobileAppUsers,
     loadMobileAppUsers,
-    updateMobileAppUser,
-    deleteMobileAppUser,
-    lookupTerminalEmployee,
+    setEmployeeMobileAccess,
+    setEmployeePin,
+    updateEmployeeMobileDetails,
   } = useAuthStore();
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [roleFilter, setRoleFilter] = useState<'all' | 'employee' | 'manager'>('all');
+  const [filterMode, setFilterMode] = useState<'all' | 'enabled' | 'disabled' | 'managers'>('all');
   const [refreshing, setRefreshing] = useState(false);
 
-  // Edit Modal State
-  const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
-  const [editModalVisible, setEditModalVisible] = useState(false);
-  const [editFullName, setEditFullName] = useState('');
+  // Revealed PIN map: { [rawUserId]: boolean }
+  const [revealedPins, setRevealedPins] = useState<Record<string, boolean>>({});
+
+  // Set PIN Modal State
+  const [pinModalVisible, setPinModalVisible] = useState(false);
+  const [targetEmployee, setTargetEmployee] = useState<EmployeeMobileAccess | null>(null);
+  const [pinValue, setPinValue] = useState('');
+  const [showPinSecret, setShowPinSecret] = useState(false);
+  const [isSavingPin, setIsSavingPin] = useState(false);
+
+  // Manage / Edit Modal State
+  const [manageModalVisible, setManageModalVisible] = useState(false);
+  const [editingEmployee, setEditingEmployee] = useState<EmployeeMobileAccess | null>(null);
+  const [editName, setEditName] = useState('');
   const [editDepartment, setEditDepartment] = useState('');
   const [editDesignation, setEditDesignation] = useState('');
-  const [editFingerprintId, setEditFingerprintId] = useState('');
+  const [editServiceId, setEditServiceId] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [editEmail, setEditEmail] = useState('');
   const [editRole, setEditRole] = useState<UserRole>('employee');
-  const [isSaving, setIsSaving] = useState(false);
-
-  // Delete Confirm State
-  const [userToDelete, setUserToDelete] = useState<UserProfile | null>(null);
-  const [deleteModalVisible, setDeleteModalVisible] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
+  const [editMobileEnabled, setEditMobileEnabled] = useState(false);
+  const [editPin, setEditPin] = useState('');
+  const [isSavingManage, setIsSavingManage] = useState(false);
 
   useEffect(() => {
     loadMobileAppUsers();
@@ -76,409 +101,666 @@ export const MobileUsersManagement: React.FC = () => {
     setRefreshing(false);
   };
 
-  const handleOpenEdit = (targetUser: UserProfile) => {
+  const togglePinReveal = (id: string) => {
     triggerHaptic.selection();
-    setSelectedUser(targetUser);
-    setEditFullName(targetUser.fullName || '');
-    setEditDepartment(targetUser.department || 'General');
-    setEditDesignation(targetUser.designation || 'Staff Member');
-    setEditFingerprintId(targetUser.fingerprintId || targetUser.fingerprint_id || '');
-    setEditRole(targetUser.role || 'employee');
-    setEditModalVisible(true);
+    setRevealedPins((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const handleSaveEdit = async () => {
-    if (!selectedUser) return;
-    setIsSaving(true);
+  // Quick Toggle Access on Card
+  const handleQuickToggleAccess = async (emp: EmployeeMobileAccess) => {
+    triggerHaptic.medium();
+    const nextState = !emp.isMobileEnabled;
+
+    if (nextState && !emp.pin) {
+      // If turning on and no PIN set yet, open Set PIN modal with preset
+      setTargetEmployee(emp);
+      setPinValue('1234');
+      setShowPinSecret(true);
+      setPinModalVisible(true);
+      return;
+    }
+
     try {
-      await updateMobileAppUser(selectedUser.uid, {
-        fullName: editFullName.trim(),
-        department: editDepartment.trim(),
-        designation: editDesignation.trim(),
-        fingerprintId: editFingerprintId.trim(),
-        role: editRole,
+      await setEmployeeMobileAccess(emp.rawUserId, nextState, emp.pin || '1234', emp.mobileRole, {
+        name: emp.name,
+        department: emp.department,
+        designation: emp.designation,
+        employeeServiceId: emp.employeeServiceId,
+        email: emp.email,
+        phone: emp.phone,
       });
       triggerHaptic.success();
-      setEditModalVisible(false);
-      setSelectedUser(null);
     } catch (err: any) {
       triggerHaptic.error();
-      Alert.alert('Update Error', err.message || 'Failed to update user profile');
-    } finally {
-      setIsSaving(false);
+      Alert.alert('Error', err.message || 'Failed to update mobile login access');
     }
   };
 
-  const handlePromptDelete = (targetUser: UserProfile) => {
-    triggerHaptic.warning();
-    setUserToDelete(targetUser);
-    setDeleteModalVisible(true);
+  // Open PIN Modal
+  const handleOpenPinModal = (emp: EmployeeMobileAccess) => {
+    triggerHaptic.selection();
+    setTargetEmployee(emp);
+    setPinValue(emp.pin || '1234');
+    setShowPinSecret(true);
+    setPinModalVisible(true);
   };
 
-  const handleConfirmDelete = async () => {
-    if (!userToDelete) return;
-    setIsDeleting(true);
+  // Save PIN
+  const handleSavePin = async () => {
+    if (!targetEmployee) return;
+    const cleanPin = pinValue.trim();
+    if (cleanPin.length < 3 || cleanPin.length > 8) {
+      Alert.alert('Invalid PIN', 'Please enter a 4-8 digit numeric PIN for mobile login.');
+      return;
+    }
+
+    setIsSavingPin(true);
     try {
-      await deleteMobileAppUser(userToDelete.uid);
+      await setEmployeePin(targetEmployee.rawUserId, cleanPin);
       triggerHaptic.success();
-      setDeleteModalVisible(false);
-      setUserToDelete(null);
+      setPinModalVisible(false);
+      setTargetEmployee(null);
+      Alert.alert(
+        'PIN Saved Successfully',
+        `Mobile login is now activated for ${targetEmployee.name}.\n\nLogin Identifier: ${targetEmployee.rawUserId} (or ${targetEmployee.employeeServiceId || targetEmployee.email})\nLogin PIN: ${cleanPin}`
+      );
     } catch (err: any) {
       triggerHaptic.error();
-      Alert.alert('Delete Error', err.message || 'Failed to remove user');
+      Alert.alert('PIN Error', err.message || 'Failed to save employee PIN');
     } finally {
-      setIsDeleting(false);
+      setIsSavingPin(false);
     }
   };
 
-  const filteredUsers = mobileAppUsers.filter((u) => {
+  // Open Manage Modal
+  const handleOpenManageModal = (emp: EmployeeMobileAccess) => {
+    triggerHaptic.selection();
+    setEditingEmployee(emp);
+    setEditName(emp.name || '');
+    setEditDepartment(emp.department || 'General');
+    setEditDesignation(emp.designation || 'Staff Member');
+    setEditServiceId(emp.employeeServiceId || '');
+    setEditPhone(emp.phone || '');
+    setEditEmail(emp.email || '');
+    setEditRole(emp.mobileRole || 'employee');
+    setEditMobileEnabled(Boolean(emp.isMobileEnabled));
+    setEditPin(emp.pin || '');
+    setManageModalVisible(true);
+  };
+
+  // Save Manage Details
+  const handleSaveManage = async () => {
+    if (!editingEmployee) return;
+    setIsSavingManage(true);
+    try {
+      await updateEmployeeMobileDetails(editingEmployee.rawUserId, {
+        name: editName.trim(),
+        department: editDepartment.trim(),
+        designation: editDesignation.trim(),
+        employeeServiceId: editServiceId.trim(),
+        phone: editPhone.trim(),
+        email: editEmail.trim(),
+        mobileRole: editRole,
+        isMobileEnabled: editMobileEnabled,
+        pin: editPin.trim() || undefined,
+      });
+      triggerHaptic.success();
+      setManageModalVisible(false);
+      setEditingEmployee(null);
+    } catch (err: any) {
+      triggerHaptic.error();
+      Alert.alert('Update Error', err.message || 'Failed to update employee details');
+    } finally {
+      setIsSavingManage(false);
+    }
+  };
+
+  // Filtered Employees List
+  const filteredEmployees = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
-    const matchQuery =
-      !q ||
-      u.fullName.toLowerCase().includes(q) ||
-      u.email.toLowerCase().includes(q) ||
-      (u.fingerprintId || u.fingerprint_id || '').toLowerCase().includes(q) ||
-      u.department.toLowerCase().includes(q) ||
-      u.designation.toLowerCase().includes(q);
+    return mobileAppUsers.filter((emp) => {
+      const matchQuery =
+        !q ||
+        emp.name.toLowerCase().includes(q) ||
+        emp.rawUserId.toLowerCase().includes(q) ||
+        emp.employeeServiceId.toLowerCase().includes(q) ||
+        emp.department.toLowerCase().includes(q) ||
+        emp.designation.toLowerCase().includes(q) ||
+        emp.email.toLowerCase().includes(q) ||
+        (emp.phone && emp.phone.includes(q)) ||
+        (emp.nic && emp.nic.toLowerCase().includes(q));
 
-    const matchRole =
-      roleFilter === 'all' ||
-      (roleFilter === 'manager' && (u.role === 'manager' || u.designation.toLowerCase().includes('admin'))) ||
-      (roleFilter === 'employee' && u.role === 'employee' && !u.designation.toLowerCase().includes('admin'));
+      const matchFilter =
+        filterMode === 'all' ||
+        (filterMode === 'enabled' && emp.isMobileEnabled) ||
+        (filterMode === 'disabled' && !emp.isMobileEnabled) ||
+        (filterMode === 'managers' && (emp.mobileRole === 'manager' || emp.role.toLowerCase().includes('admin')));
 
-    return matchQuery && matchRole;
-  });
+      return matchQuery && matchFilter;
+    });
+  }, [mobileAppUsers, searchQuery, filterMode]);
 
-  const employeeCount = mobileAppUsers.filter(
-    (u) => u.role === 'employee' && !u.designation.toLowerCase().includes('admin')
-  ).length;
-  const managerCount = mobileAppUsers.filter(
-    (u) => u.role === 'manager' || u.designation.toLowerCase().includes('admin')
-  ).length;
+  // Statistics
+  const totalCount = mobileAppUsers.length;
+  const enabledCount = useMemo(
+    () => mobileAppUsers.filter((u) => u.isMobileEnabled).length,
+    [mobileAppUsers]
+  );
+  const disabledCount = totalCount - enabledCount;
+  const managerCount = useMemo(
+    () =>
+      mobileAppUsers.filter(
+        (u) => u.mobileRole === 'manager' || u.role.toLowerCase().includes('admin')
+      ).length,
+    [mobileAppUsers]
+  );
 
-  return (
-    <View style={styles.container}>
-      {/* Search & Statistics Bar */}
-      <View style={styles.topBar}>
+  const renderEmployeeCard = useCallback(
+    ({ item }: { item: EmployeeMobileAccess }) => {
+      const isManager = item.mobileRole === 'manager' || item.role.toLowerCase().includes('admin');
+      const isSelf =
+        currentUser?.uid === item.userId ||
+        currentUser?.rawUserId === item.rawUserId ||
+        currentUser?.fingerprintId === item.rawUserId;
+      const isPinRevealed = Boolean(revealedPins[item.rawUserId]);
+
+      return (
         <View
           style={[
-            styles.searchContainer,
+            styles.card,
             {
-              backgroundColor: colors.inputBg,
-              borderColor: colors.inputBorder,
-              borderRadius: borderRadius.md,
+              backgroundColor: colors.card,
+              borderColor: item.isMobileEnabled ? colors.border : colors.border + '60',
+              borderRadius: borderRadius.lg,
+              ...elevation.sm,
+              shadowColor: colors.shadowColor,
             },
           ]}
         >
-          <Search size={16} color={colors.textTertiary} />
-          <TextInput
-            placeholder="Search by name, ID, email, or dept..."
-            placeholderTextColor={colors.textTertiary}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            style={[styles.searchInput, { color: colors.textPrimary }]}
-          />
-          {searchQuery.length > 0 && (
-            <Pressable onPress={() => setSearchQuery('')}>
-              <X size={16} color={colors.textTertiary} />
-            </Pressable>
-          )}
-        </View>
-
-        <Pressable
-          onPress={handleRefresh}
-          style={[
-            styles.refreshBtn,
-            {
-              backgroundColor: colors.surfaceSubtle,
-              borderRadius: borderRadius.md,
-            },
-          ]}
-        >
-          <RefreshCw size={15} color={colors.textSecondary} />
-        </Pressable>
-      </View>
-
-      {/* Role Filter Tabs */}
-      <View style={styles.filterRow}>
-        <Pressable
-          onPress={() => setRoleFilter('all')}
-          style={[
-            styles.filterChip,
-            {
-              backgroundColor: roleFilter === 'all' ? colors.primary : colors.card,
-              borderColor: colors.border,
-              borderRadius: borderRadius.full,
-            },
-          ]}
-        >
-          <Text
-            style={[
-              typography.caption,
-              {
-                color: roleFilter === 'all' ? '#FFFFFF' : colors.textSecondary,
-                fontWeight: '700',
-              },
-            ]}
-          >
-            All Users ({mobileAppUsers.length})
-          </Text>
-        </Pressable>
-
-        <Pressable
-          onPress={() => setRoleFilter('employee')}
-          style={[
-            styles.filterChip,
-            {
-              backgroundColor: roleFilter === 'employee' ? colors.primary : colors.card,
-              borderColor: colors.border,
-              borderRadius: borderRadius.full,
-            },
-          ]}
-        >
-          <Text
-            style={[
-              typography.caption,
-              {
-                color: roleFilter === 'employee' ? '#FFFFFF' : colors.textSecondary,
-                fontWeight: '700',
-              },
-            ]}
-          >
-            Staff ({employeeCount})
-          </Text>
-        </Pressable>
-
-        <Pressable
-          onPress={() => setRoleFilter('manager')}
-          style={[
-            styles.filterChip,
-            {
-              backgroundColor: roleFilter === 'manager' ? colors.primary : colors.card,
-              borderColor: colors.border,
-              borderRadius: borderRadius.full,
-            },
-          ]}
-        >
-          <Text
-            style={[
-              typography.caption,
-              {
-                color: roleFilter === 'manager' ? '#FFFFFF' : colors.textSecondary,
-                fontWeight: '700',
-              },
-            ]}
-          >
-            Admins / Managers ({managerCount})
-          </Text>
-        </Pressable>
-      </View>
-
-      {/* Users List */}
-      <ScrollView
-        contentContainerStyle={{ gap: 10, paddingBottom: 60 }}
-        showsVerticalScrollIndicator={false}
-      >
-        {filteredUsers.map((u) => {
-          const isManager =
-            u.role === 'manager' || u.designation.toLowerCase().includes('admin');
-          const fpId = u.fingerprintId || u.fingerprint_id || '';
-          const isSelf = currentUser?.uid === u.uid;
-
-          return (
+          {/* Card Header: Avatar, Name, Biometric ID, Service ID */}
+          <View style={styles.cardHeader}>
             <View
-              key={u.uid}
               style={[
-                styles.userCard,
+                styles.avatar,
                 {
-                  backgroundColor: colors.card,
-                  borderColor: colors.border,
-                  borderRadius: borderRadius.lg,
-                  ...elevation.sm,
+                  backgroundColor: item.isMobileEnabled
+                    ? isManager
+                      ? colors.primary
+                      : colors.secondary
+                    : colors.surfaceSubtle,
+                  borderColor: item.isMobileEnabled ? colors.primary + '40' : colors.border,
+                  borderRadius: borderRadius.full,
                 },
               ]}
             >
-              {/* Card Top: Avatar, Name, Designation & Role */}
-              <View style={styles.cardHeader}>
-                <View
-                  style={[
-                    styles.avatar,
-                    {
-                      backgroundColor: isManager ? colors.primaryLight : colors.secondary,
-                      borderRadius: borderRadius.full,
-                    },
-                  ]}
-                >
-                  <Text style={{ color: '#FFFFFF', fontWeight: '800', fontSize: 14 }}>
-                    {u.fullName.charAt(0).toUpperCase()}
-                  </Text>
-                </View>
+              <Text
+                style={{
+                  color: item.isMobileEnabled ? '#FFFFFF' : colors.textTertiary,
+                  fontWeight: '800',
+                  fontSize: 14,
+                }}
+              >
+                {(item.name || 'E').charAt(0).toUpperCase()}
+              </Text>
+            </View>
 
-                <View style={{ flex: 1 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <Text
-                      style={[
-                        typography.subtitle1,
-                        { color: colors.textPrimary, fontWeight: '700' },
-                      ]}
-                      numberOfLines={1}
-                    >
-                      {u.fullName}
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <Text
+                  style={[
+                    typography.subtitle1,
+                    { color: colors.textPrimary, fontWeight: '700' },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {item.name}
+                </Text>
+
+                {isSelf && (
+                  <View
+                    style={[
+                      styles.selfBadge,
+                      { backgroundColor: colors.primary + '18', borderRadius: borderRadius.xs },
+                    ]}
+                  >
+                    <Text style={[typography.caption, { color: colors.primary, fontSize: 9, fontWeight: '800' }]}>
+                      YOU
                     </Text>
-                    {isSelf && (
-                      <View
-                        style={[
-                          styles.selfTag,
-                          { backgroundColor: colors.surfaceSubtle, borderRadius: borderRadius.xs },
-                        ]}
-                      >
-                        <Text style={[typography.caption, { color: colors.textTertiary, fontSize: 9, fontWeight: '700' }]}>
-                          YOU
-                        </Text>
-                      </View>
-                    )}
                   </View>
-
-                  <Text style={[typography.caption, { color: colors.textSecondary }]}>
-                    {u.designation} • {u.department}
-                  </Text>
-                </View>
-
-                <View
-                  style={[
-                    styles.roleBadge,
-                    {
-                      backgroundColor: isManager ? colors.primaryLight + '22' : colors.surfaceSubtle,
-                      borderColor: isManager ? colors.primaryLight : colors.border,
-                      borderRadius: borderRadius.full,
-                    },
-                  ]}
-                >
-                  {isManager ? (
-                    <Shield size={11} color={colors.primaryLight} />
-                  ) : (
-                    <User size={11} color={colors.textSecondary} />
-                  )}
-                  <Text
-                    style={[
-                      typography.caption,
-                      {
-                        color: isManager ? colors.primaryLight : colors.textSecondary,
-                        fontWeight: '700',
-                        fontSize: 10,
-                        textTransform: 'capitalize',
-                      },
-                    ]}
-                  >
-                    {u.role}
-                  </Text>
-                </View>
-              </View>
-
-              {/* Card Details: Biometric ID & Email */}
-              <View style={styles.cardDetails}>
-                <View
-                  style={[
-                    styles.infoPill,
-                    {
-                      backgroundColor: fpId ? colors.successBg : colors.surfaceSubtle,
-                      borderRadius: borderRadius.sm,
-                    },
-                  ]}
-                >
-                  <Fingerprint size={12} color={fpId ? colors.success : colors.textTertiary} />
-                  <Text
-                    style={[
-                      typography.caption,
-                      {
-                        color: fpId ? colors.success : colors.textSecondary,
-                        fontWeight: '600',
-                        fontSize: 11,
-                      },
-                    ]}
-                  >
-                    {fpId ? `Biometric ID #${fpId} (Attendance Linked)` : 'No Biometric ID Linked'}
-                  </Text>
-                </View>
-
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
-                  <Mail size={12} color={colors.textTertiary} />
-                  <Text style={[typography.caption, { color: colors.textSecondary, fontSize: 11 }]}>
-                    {u.email}
-                  </Text>
-                </View>
-              </View>
-
-              {/* Card Actions: Edit & Revoke */}
-              <View style={[styles.cardActions, { borderTopColor: colors.border }]}>
-                <Pressable
-                  onPress={() => handleOpenEdit(u)}
-                  style={[
-                    styles.actionBtn,
-                    {
-                      backgroundColor: colors.surfaceSubtle,
-                      borderRadius: borderRadius.md,
-                    },
-                  ]}
-                >
-                  <Edit2 size={13} color={colors.primary} />
-                  <Text style={[typography.caption, { color: colors.primary, fontWeight: '700' }]}>
-                    Edit Role & Profile
-                  </Text>
-                </Pressable>
-
-                {!isSelf && (
-                  <Pressable
-                    onPress={() => handlePromptDelete(u)}
-                    style={[
-                      styles.actionBtn,
-                      {
-                        backgroundColor: colors.dangerBg,
-                        borderRadius: borderRadius.md,
-                      },
-                    ]}
-                  >
-                    <Trash2 size={13} color={colors.danger} />
-                    <Text style={[typography.caption, { color: colors.danger, fontWeight: '700' }]}>
-                      Revoke Access
-                    </Text>
-                  </Pressable>
                 )}
               </View>
-            </View>
-          );
-        })}
 
-        {filteredUsers.length === 0 && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2, flexWrap: 'wrap' }}>
+                {/* Biometric ID Badge */}
+                <View
+                  style={[
+                    styles.idBadge,
+                    { backgroundColor: colors.primaryLight + '15', borderRadius: borderRadius.xs },
+                  ]}
+                >
+                  <Fingerprint size={10} color={colors.primary} />
+                  <Text style={[typography.caption, { color: colors.primary, fontSize: 10, fontWeight: '700' }]}>
+                    ID: #{item.rawUserId}
+                  </Text>
+                </View>
+
+                {/* Service ID Badge */}
+                {item.employeeServiceId ? (
+                  <View
+                    style={[
+                      styles.idBadge,
+                      { backgroundColor: colors.surfaceSubtle, borderRadius: borderRadius.xs },
+                    ]}
+                  >
+                    <Text style={[typography.caption, { color: colors.textSecondary, fontSize: 10, fontWeight: '600' }]}>
+                      {item.employeeServiceId}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {/* Role Badge */}
+                <View
+                  style={[
+                    styles.idBadge,
+                    {
+                      backgroundColor: isManager ? '#f59e0b18' : colors.surfaceSubtle,
+                      borderRadius: borderRadius.xs,
+                    },
+                  ]}
+                >
+                  {isManager ? <Shield size={10} color="#d97706" /> : <User size={10} color={colors.textTertiary} />}
+                  <Text
+                    style={[
+                      typography.caption,
+                      {
+                        color: isManager ? '#d97706' : colors.textSecondary,
+                        fontSize: 10,
+                        fontWeight: '700',
+                      },
+                    ]}
+                  >
+                    {isManager ? 'Supervisor' : 'Staff'}
+                  </Text>
+                </View>
+              </View>
+
+              <Text style={[typography.caption, { color: colors.textTertiary, marginTop: 4 }]} numberOfLines={1}>
+                {item.designation || 'Staff'} • {item.department || 'General'}
+              </Text>
+            </View>
+
+            {/* Quick Toggle Switch */}
+            <View style={{ alignItems: 'center', gap: 4 }}>
+              <Switch
+                value={item.isMobileEnabled}
+                onValueChange={() => handleQuickToggleAccess(item)}
+                trackColor={{ false: colors.surfaceSubtle, true: colors.primaryLight }}
+                thumbColor={item.isMobileEnabled ? colors.primary : colors.textTertiary}
+                ios_backgroundColor={colors.surfaceSubtle}
+              />
+              <Text
+                style={[
+                  typography.caption,
+                  {
+                    color: item.isMobileEnabled ? colors.success : colors.textTertiary,
+                    fontSize: 10,
+                    fontWeight: '700',
+                  },
+                ]}
+              >
+                {item.isMobileEnabled ? 'ACTIVE' : 'OFF'}
+              </Text>
+            </View>
+          </View>
+
+          {/* Status & PIN Row */}
           <View
             style={[
-              styles.emptyState,
+              styles.infoStrip,
               {
-                backgroundColor: colors.card,
+                backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : colors.surfaceSubtle,
                 borderColor: colors.border,
-                borderRadius: borderRadius.lg,
+                borderRadius: borderRadius.md,
               },
             ]}
           >
+            {/* Login Access Status Indicator */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+              {item.isMobileEnabled ? (
+                <>
+                  <CheckCircle size={14} color={colors.success} />
+                  <Text style={[typography.caption, { color: colors.success, fontWeight: '700' }]}>
+                    Login Enabled
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <XCircle size={14} color={colors.textTertiary} />
+                  <Text style={[typography.caption, { color: colors.textTertiary, fontWeight: '600' }]}>
+                    Not Activated
+                  </Text>
+                </>
+              )}
+            </View>
+
+            {/* PIN Indicator & Reveal Button */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              {item.pin ? (
+                <Pressable
+                  onPress={() => togglePinReveal(item.rawUserId)}
+                  style={[
+                    styles.pinDisplayBadge,
+                    { backgroundColor: colors.card, borderColor: colors.border, borderRadius: borderRadius.sm },
+                  ]}
+                >
+                  <Key size={11} color={colors.primary} />
+                  <Text style={[typography.caption, { color: colors.textPrimary, fontWeight: '700', fontSize: 11 }]}>
+                    PIN: {isPinRevealed ? item.pin : '••••'}
+                  </Text>
+                  {isPinRevealed ? (
+                    <EyeOff size={11} color={colors.textTertiary} />
+                  ) : (
+                    <Eye size={11} color={colors.textTertiary} />
+                  )}
+                </Pressable>
+              ) : (
+                <View
+                  style={[
+                    styles.pinDisplayBadge,
+                    { backgroundColor: '#fef3c7', borderColor: '#fde68a', borderRadius: borderRadius.sm },
+                  ]}
+                >
+                  <AlertTriangle size={11} color="#d97706" />
+                  <Text style={[typography.caption, { color: '#b45309', fontWeight: '700', fontSize: 10 }]}>
+                    No PIN
+                  </Text>
+                </View>
+              )}
+            </View>
+          </View>
+
+          {/* Action Targets Bar */}
+          <View style={styles.cardActionsRow}>
+            {/* Button 1: Set / Change PIN */}
+            <Pressable
+              onPress={() => handleOpenPinModal(item)}
+              style={[
+                styles.actionBtn,
+                {
+                  backgroundColor: colors.surfaceSubtle,
+                  borderColor: colors.border,
+                  borderRadius: borderRadius.md,
+                },
+              ]}
+            >
+              <Key size={13} color={colors.primary} />
+              <Text style={[typography.caption, { color: colors.primary, fontWeight: '700' }]}>
+                {item.pin ? 'Change PIN' : 'Set PIN'}
+              </Text>
+            </Pressable>
+
+            {/* Button 2: Manage Profile & Roles */}
+            <Pressable
+              onPress={() => handleOpenManageModal(item)}
+              style={[
+                styles.actionBtn,
+                {
+                  backgroundColor: colors.surfaceSubtle,
+                  borderColor: colors.border,
+                  borderRadius: borderRadius.md,
+                },
+              ]}
+            >
+              <Sliders size={13} color={colors.textSecondary} />
+              <Text style={[typography.caption, { color: colors.textPrimary, fontWeight: '600' }]}>
+                Manage
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      );
+    },
+    [colors, typography, borderRadius, elevation, isDark, currentUser, revealedPins]
+  );
+
+  return (
+    <View style={styles.container}>
+      {/* Virtualized Employees List with Integrated Scrolling Header */}
+      <FlatList
+        data={filteredEmployees}
+        renderItem={renderEmployeeCard}
+        keyExtractor={(item) => String(item.userId || item.rawUserId)}
+        contentContainerStyle={[
+          styles.listContent,
+          contentContainerStyle || { paddingBottom: 80, paddingHorizontal: 20 },
+        ]}
+        showsVerticalScrollIndicator={false}
+        initialNumToRender={15}
+        maxToRenderPerBatch={20}
+        windowSize={7}
+        removeClippedSubviews={Platform.OS === 'android'}
+        refreshing={refreshing}
+        onRefresh={handleRefresh}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        ListHeaderComponent={
+          <View style={styles.listHeaderWrapper}>
+            {headerPrefix}
+
+            {/* Top Summary Statistics Strip */}
+            <View style={styles.statsRow}>
+              <View
+                style={[
+                  styles.statCard,
+                  { backgroundColor: colors.card, borderColor: colors.border, borderRadius: borderRadius.md, ...elevation.sm },
+                ]}
+              >
+                <Text style={[typography.caption, { color: colors.textTertiary, fontSize: 10, fontWeight: '700' }]}>
+                  TOTAL STAFF
+                </Text>
+                <Text style={[typography.h2, { color: colors.textPrimary, fontWeight: '800' }]}>
+                  {totalCount}
+                </Text>
+              </View>
+
+              <View
+                style={[
+                  styles.statCard,
+                  { backgroundColor: colors.card, borderColor: colors.border, borderRadius: borderRadius.md, ...elevation.sm },
+                ]}
+              >
+                <Text style={[typography.caption, { color: colors.success, fontSize: 10, fontWeight: '700' }]}>
+                  LOGIN ACTIVE
+                </Text>
+                <Text style={[typography.h2, { color: colors.success, fontWeight: '800' }]}>
+                  {enabledCount}
+                </Text>
+              </View>
+
+              <View
+                style={[
+                  styles.statCard,
+                  { backgroundColor: colors.card, borderColor: colors.border, borderRadius: borderRadius.md, ...elevation.sm },
+                ]}
+              >
+                <Text style={[typography.caption, { color: colors.textTertiary, fontSize: 10, fontWeight: '700' }]}>
+                  INACTIVE
+                </Text>
+                <Text style={[typography.h2, { color: colors.textSecondary, fontWeight: '800' }]}>
+                  {disabledCount}
+                </Text>
+              </View>
+
+              <View
+                style={[
+                  styles.statCard,
+                  { backgroundColor: colors.card, borderColor: colors.border, borderRadius: borderRadius.md, ...elevation.sm },
+                ]}
+              >
+                <Text style={[typography.caption, { color: '#d97706', fontSize: 10, fontWeight: '700' }]}>
+                  MANAGERS
+                </Text>
+                <Text style={[typography.h2, { color: '#d97706', fontWeight: '800' }]}>
+                  {managerCount}
+                </Text>
+              </View>
+            </View>
+
+            {/* Search Input Bar */}
+            <View style={styles.searchBarRow}>
+              <View
+                style={[
+                  styles.searchContainer,
+                  {
+                    backgroundColor: colors.inputBg,
+                    borderColor: colors.inputBorder,
+                    borderRadius: borderRadius.md,
+                  },
+                ]}
+              >
+                <Search size={16} color={colors.textTertiary} />
+                <TextInput
+                  placeholder="Search by name, ID (#2), service ID, or dept..."
+                  placeholderTextColor={colors.textTertiary}
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  style={[styles.searchInput, { color: colors.textPrimary }]}
+                  returnKeyType="search"
+                  clearButtonMode="while-editing"
+                />
+                {searchQuery.length > 0 && (
+                  <Pressable onPress={() => setSearchQuery('')} hitSlop={8}>
+                    <X size={16} color={colors.textTertiary} />
+                  </Pressable>
+                )}
+              </View>
+
+              <Pressable
+                onPress={handleRefresh}
+                style={[
+                  styles.refreshBtn,
+                  {
+                    backgroundColor: colors.surfaceSubtle,
+                    borderColor: colors.border,
+                    borderRadius: borderRadius.md,
+                  },
+                ]}
+              >
+                <RefreshCw size={16} color={colors.primary} />
+              </Pressable>
+            </View>
+
+            {/* Filter Chips Bar */}
+            <View style={styles.filterRow}>
+              <Pressable
+                onPress={() => setFilterMode('all')}
+                style={[
+                  styles.filterChip,
+                  {
+                    backgroundColor: filterMode === 'all' ? colors.primary : colors.card,
+                    borderColor: colors.border,
+                    borderRadius: borderRadius.full,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    typography.caption,
+                    { color: filterMode === 'all' ? '#FFFFFF' : colors.textSecondary, fontWeight: '700' },
+                  ]}
+                >
+                  All Staff ({totalCount})
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => setFilterMode('enabled')}
+                style={[
+                  styles.filterChip,
+                  {
+                    backgroundColor: filterMode === 'enabled' ? colors.primary : colors.card,
+                    borderColor: colors.border,
+                    borderRadius: borderRadius.full,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    typography.caption,
+                    { color: filterMode === 'enabled' ? '#FFFFFF' : colors.textSecondary, fontWeight: '700' },
+                  ]}
+                >
+                  Active Login ({enabledCount})
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => setFilterMode('disabled')}
+                style={[
+                  styles.filterChip,
+                  {
+                    backgroundColor: filterMode === 'disabled' ? colors.primary : colors.card,
+                    borderColor: colors.border,
+                    borderRadius: borderRadius.full,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    typography.caption,
+                    { color: filterMode === 'disabled' ? '#FFFFFF' : colors.textSecondary, fontWeight: '700' },
+                  ]}
+                >
+                  Inactive ({disabledCount})
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => setFilterMode('managers')}
+                style={[
+                  styles.filterChip,
+                  {
+                    backgroundColor: filterMode === 'managers' ? colors.primary : colors.card,
+                    borderColor: colors.border,
+                    borderRadius: borderRadius.full,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    typography.caption,
+                    { color: filterMode === 'managers' ? '#FFFFFF' : colors.textSecondary, fontWeight: '700' },
+                  ]}
+                >
+                  Managers ({managerCount})
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        }
+        ListEmptyComponent={
+          <View style={[styles.emptyContainer, { borderColor: colors.border, borderRadius: borderRadius.lg }]}>
             <Users size={32} color={colors.textTertiary} />
             <Text style={[typography.subtitle1, { color: colors.textPrimary, marginTop: 8 }]}>
-              No Mobile Users Found
+              No Employees Found
             </Text>
-            <Text style={[typography.caption, { color: colors.textSecondary, textAlign: 'center' }]}>
+            <Text style={[typography.caption, { color: colors.textSecondary, textAlign: 'center', marginTop: 4 }]}>
               {searchQuery
-                ? 'No users match your search query.'
-                : 'No mobile app accounts registered yet in this organization.'}
+                ? `No employees match "${searchQuery}". Try searching by ID or name.`
+                : 'No employees recorded under this organization.'}
             </Text>
           </View>
-        )}
-      </ScrollView>
+        }
+      />
 
-      {/* EDIT USER MODAL */}
+      {/* ============================================================ */}
+      {/* 1. SET / CHANGE PIN MODAL */}
+      {/* ============================================================ */}
       <Modal
-        visible={editModalVisible}
+        visible={pinModalVisible}
         transparent
         animationType="fade"
-        onRequestClose={() => setEditModalVisible(false)}
+        onRequestClose={() => setPinModalVisible(false)}
       >
         <View style={styles.modalOverlay}>
           <View
@@ -493,181 +775,167 @@ export const MobileUsersManagement: React.FC = () => {
             ]}
           >
             <View style={styles.modalHeader}>
-              <View>
-                <Text style={[typography.h3, { color: colors.textPrimary }]}>
-                  Edit User Account
-                </Text>
-                <Text style={[typography.caption, { color: colors.textSecondary }]}>
-                  {selectedUser?.email}
-                </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <View
+                  style={[
+                    styles.modalIconWrap,
+                    { backgroundColor: colors.primary + '18', borderRadius: borderRadius.full },
+                  ]}
+                >
+                  <Key size={18} color={colors.primary} />
+                </View>
+                <View>
+                  <Text style={[typography.h3, { color: colors.textPrimary }]}>
+                    Set Mobile Login PIN
+                  </Text>
+                  <Text style={[typography.caption, { color: colors.textSecondary }]}>
+                    {targetEmployee?.name} (ID: #{targetEmployee?.rawUserId})
+                  </Text>
+                </View>
               </View>
-              <Pressable onPress={() => setEditModalVisible(false)}>
+
+              <Pressable onPress={() => setPinModalVisible(false)} hitSlop={8}>
                 <X size={20} color={colors.textSecondary} />
               </Pressable>
             </View>
 
-            <ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={false}>
-              {/* Role Selector */}
-              <View style={styles.inputField}>
-                <Text style={[typography.caption, { color: colors.textSecondary, marginBottom: 6, fontWeight: '700' }]}>
-                  USER ROLE & PERMISSIONS
-                </Text>
-                <View style={styles.rolePickerRow}>
-                  <Pressable
-                    onPress={() => setEditRole('employee')}
-                    style={[
-                      styles.rolePickerOption,
-                      {
-                        backgroundColor: editRole === 'employee' ? colors.primary : colors.surfaceSubtle,
-                        borderRadius: borderRadius.md,
-                      },
-                    ]}
-                  >
-                    <User size={14} color={editRole === 'employee' ? '#FFFFFF' : colors.textSecondary} />
-                    <Text
-                      style={[
-                        typography.subtitle2,
-                        { color: editRole === 'employee' ? '#FFFFFF' : colors.textPrimary },
-                      ]}
-                    >
-                      Employee
-                    </Text>
-                  </Pressable>
+            <View style={{ paddingVertical: 12, gap: 14 }}>
+              <Text style={[typography.body2, { color: colors.textSecondary }]}>
+                Assign a 4 to 6 digit security PIN that this employee will enter on the mobile app login screen:
+              </Text>
 
-                  <Pressable
-                    onPress={() => setEditRole('manager')}
-                    style={[
-                      styles.rolePickerOption,
-                      {
-                        backgroundColor: editRole === 'manager' ? colors.primary : colors.surfaceSubtle,
-                        borderRadius: borderRadius.md,
-                      },
-                    ]}
-                  >
-                    <Shield size={14} color={editRole === 'manager' ? '#FFFFFF' : colors.textSecondary} />
-                    <Text
+              {/* PIN Input Box */}
+              <View
+                style={[
+                  styles.pinInputContainer,
+                  {
+                    backgroundColor: colors.inputBg,
+                    borderColor: colors.inputBorder,
+                    borderRadius: borderRadius.md,
+                  },
+                ]}
+              >
+                <Key size={20} color={colors.primary} />
+                <TextInput
+                  value={pinValue}
+                  onChangeText={setPinValue}
+                  placeholder="Enter 4-6 digit PIN (e.g. 1234)"
+                  placeholderTextColor={colors.textTertiary}
+                  keyboardType="numeric"
+                  maxLength={8}
+                  secureTextEntry={!showPinSecret}
+                  style={[styles.pinTextInput, { color: colors.textPrimary }]}
+                  autoFocus
+                />
+                <Pressable onPress={() => setShowPinSecret(!showPinSecret)} hitSlop={8}>
+                  {showPinSecret ? (
+                    <EyeOff size={18} color={colors.textTertiary} />
+                  ) : (
+                    <Eye size={18} color={colors.textTertiary} />
+                  )}
+                </Pressable>
+              </View>
+
+              {/* Fast Preset Buttons */}
+              <View>
+                <Text style={[typography.caption, { color: colors.textTertiary, marginBottom: 6, fontWeight: '700' }]}>
+                  QUICK PRESETS:
+                </Text>
+                <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                  {['1234', '0000', '9999'].map((preset) => (
+                    <Pressable
+                      key={preset}
+                      onPress={() => {
+                        triggerHaptic.selection();
+                        setPinValue(preset);
+                      }}
                       style={[
-                        typography.subtitle2,
-                        { color: editRole === 'manager' ? '#FFFFFF' : colors.textPrimary },
+                        styles.presetChip,
+                        {
+                          backgroundColor: pinValue === preset ? colors.primary : colors.surfaceSubtle,
+                          borderColor: colors.border,
+                          borderRadius: borderRadius.sm,
+                        },
                       ]}
                     >
-                      Manager / Admin
-                    </Text>
-                  </Pressable>
+                      <Text
+                        style={[
+                          typography.caption,
+                          {
+                            color: pinValue === preset ? '#FFFFFF' : colors.textPrimary,
+                            fontWeight: '700',
+                          },
+                        ]}
+                      >
+                        {preset}
+                      </Text>
+                    </Pressable>
+                  ))}
+
+                  {targetEmployee?.rawUserId && (
+                    <Pressable
+                      onPress={() => {
+                        triggerHaptic.selection();
+                        const id = targetEmployee.rawUserId.padStart(4, '0');
+                        setPinValue(id);
+                      }}
+                      style={[
+                        styles.presetChip,
+                        {
+                          backgroundColor: colors.surfaceSubtle,
+                          borderColor: colors.border,
+                          borderRadius: borderRadius.sm,
+                        },
+                      ]}
+                    >
+                      <Sparkles size={11} color={colors.primary} />
+                      <Text style={[typography.caption, { color: colors.primary, fontWeight: '700' }]}>
+                        Use ID ({targetEmployee.rawUserId.padStart(4, '0')})
+                      </Text>
+                    </Pressable>
+                  )}
                 </View>
               </View>
 
-              {/* Full Name */}
-              <View style={styles.inputField}>
-                <Text style={[typography.caption, { color: colors.textSecondary, marginBottom: 4, fontWeight: '700' }]}>
-                  FULL NAME
-                </Text>
-                <TextInput
-                  value={editFullName}
-                  onChangeText={setEditFullName}
-                  style={[
-                    styles.textInput,
-                    {
-                      backgroundColor: colors.inputBg,
-                      borderColor: colors.inputBorder,
-                      color: colors.textPrimary,
-                      borderRadius: borderRadius.md,
-                    },
-                  ]}
-                />
-              </View>
-
-              {/* Biometric Fingerprint ID */}
-              <View style={styles.inputField}>
-                <Text style={[typography.caption, { color: colors.textSecondary, marginBottom: 4, fontWeight: '700' }]}>
-                  BIOMETRIC FINGERPRINT ID
-                </Text>
-                <TextInput
-                  value={editFingerprintId}
-                  onChangeText={setEditFingerprintId}
-                  placeholder="e.g. 10"
-                  placeholderTextColor={colors.textTertiary}
-                  style={[
-                    styles.textInput,
-                    {
-                      backgroundColor: colors.inputBg,
-                      borderColor: colors.inputBorder,
-                      color: colors.textPrimary,
-                      borderRadius: borderRadius.md,
-                    },
-                  ]}
-                />
-                <Text style={[typography.caption, { color: colors.textTertiary, marginTop: 2, fontSize: 10 }]}>
-                  Links to SpeedFace terminal punches matching this ID
+              <View
+                style={[
+                  styles.loginHintBox,
+                  { backgroundColor: colors.primary + '10', borderColor: colors.primary + '30', borderRadius: borderRadius.md },
+                ]}
+              >
+                <Text style={[typography.caption, { color: colors.primary, fontWeight: '600' }]}>
+                  ✓ The employee can log in immediately by selecting {currentOrgName || 'organization'} and entering their ID ({targetEmployee?.rawUserId}) and this PIN.
                 </Text>
               </View>
-
-              {/* Department */}
-              <View style={styles.inputField}>
-                <Text style={[typography.caption, { color: colors.textSecondary, marginBottom: 4, fontWeight: '700' }]}>
-                  DEPARTMENT
-                </Text>
-                <TextInput
-                  value={editDepartment}
-                  onChangeText={setEditDepartment}
-                  style={[
-                    styles.textInput,
-                    {
-                      backgroundColor: colors.inputBg,
-                      borderColor: colors.inputBorder,
-                      color: colors.textPrimary,
-                      borderRadius: borderRadius.md,
-                    },
-                  ]}
-                />
-              </View>
-
-              {/* Designation */}
-              <View style={styles.inputField}>
-                <Text style={[typography.caption, { color: colors.textSecondary, marginBottom: 4, fontWeight: '700' }]}>
-                  DESIGNATION / TITLE
-                </Text>
-                <TextInput
-                  value={editDesignation}
-                  onChangeText={setEditDesignation}
-                  style={[
-                    styles.textInput,
-                    {
-                      backgroundColor: colors.inputBg,
-                      borderColor: colors.inputBorder,
-                      color: colors.textPrimary,
-                      borderRadius: borderRadius.md,
-                    },
-                  ]}
-                />
-              </View>
-            </ScrollView>
+            </View>
 
             <View style={styles.modalBtnRow}>
               <CustomButton
                 title="Cancel"
                 variant="outline"
-                onPress={() => setEditModalVisible(false)}
+                onPress={() => setPinModalVisible(false)}
                 style={{ flex: 1 }}
               />
               <CustomButton
-                title="Save Changes"
+                title="Save PIN & Enable"
                 variant="primary"
-                loading={isSaving}
-                onPress={handleSaveEdit}
-                style={{ flex: 1 }}
+                loading={isSavingPin}
+                onPress={handleSavePin}
+                style={{ flex: 1.5 }}
               />
             </View>
           </View>
         </View>
       </Modal>
 
-      {/* DELETE CONFIRM MODAL */}
+      {/* ============================================================ */}
+      {/* 2. MANAGE EMPLOYEE PROFILE & ROLE MODAL */}
+      {/* ============================================================ */}
       <Modal
-        visible={deleteModalVisible}
+        visible={manageModalVisible}
         transparent
         animationType="fade"
-        onRequestClose={() => setDeleteModalVisible(false)}
+        onRequestClose={() => setManageModalVisible(false)}
       >
         <View style={styles.modalOverlay}>
           <View
@@ -678,39 +946,294 @@ export const MobileUsersManagement: React.FC = () => {
                 borderColor: colors.border,
                 borderRadius: borderRadius.xl,
                 ...elevation.md,
+                maxHeight: '90%',
               },
             ]}
           >
-            <View style={{ alignItems: 'center', gap: 8, paddingVertical: 8 }}>
-              <View
-                style={[
-                  styles.deleteIconWrap,
-                  { backgroundColor: colors.dangerBg, borderRadius: borderRadius.full },
-                ]}
-              >
-                <AlertTriangle size={28} color={colors.danger} />
+            <View style={styles.modalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <View
+                  style={[
+                    styles.modalIconWrap,
+                    { backgroundColor: colors.secondary + '20', borderRadius: borderRadius.full },
+                  ]}
+                >
+                  <Sliders size={18} color={colors.secondary} />
+                </View>
+                <View>
+                  <Text style={[typography.h3, { color: colors.textPrimary }]}>
+                    Manage Employee Portal
+                  </Text>
+                  <Text style={[typography.caption, { color: colors.textSecondary }]}>
+                    Biometric ID #{editingEmployee?.rawUserId}
+                  </Text>
+                </View>
               </View>
-              <Text style={[typography.h3, { color: colors.textPrimary, textAlign: 'center' }]}>
-                Revoke User Access?
-              </Text>
-              <Text style={[typography.body2, { color: colors.textSecondary, textAlign: 'center' }]}>
-                Are you sure you want to remove <Text style={{ fontWeight: '700' }}>{userToDelete?.fullName}</Text> from mobile portal access in {currentOrgName}?
-              </Text>
+
+              <Pressable onPress={() => setManageModalVisible(false)} hitSlop={8}>
+                <X size={20} color={colors.textSecondary} />
+              </Pressable>
             </View>
+
+            <FlatList
+              data={[1]}
+              keyExtractor={() => 'form'}
+              renderItem={() => (
+                <View style={{ gap: 12, paddingVertical: 10 }}>
+                  {/* Access Toggle Row */}
+                  <View
+                    style={[
+                      styles.toggleCardRow,
+                      {
+                        backgroundColor: colors.surfaceSubtle,
+                        borderColor: colors.border,
+                        borderRadius: borderRadius.md,
+                      },
+                    ]}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={[typography.subtitle2, { color: colors.textPrimary }]}>
+                        Mobile App Login Access
+                      </Text>
+                      <Text style={[typography.caption, { color: colors.textSecondary }]}>
+                        Enable or revoke permission to log into the mobile app
+                      </Text>
+                    </View>
+                    <Switch
+                      value={editMobileEnabled}
+                      onValueChange={setEditMobileEnabled}
+                      trackColor={{ false: colors.border, true: colors.primaryLight }}
+                      thumbColor={editMobileEnabled ? colors.primary : colors.textTertiary}
+                    />
+                  </View>
+
+                  {/* Role Selector */}
+                  <View>
+                    <Text style={[typography.caption, { color: colors.textSecondary, marginBottom: 6, fontWeight: '700' }]}>
+                      MOBILE APP ROLE PERMISSION
+                    </Text>
+                    <View style={styles.roleBtnGroup}>
+                      <Pressable
+                        onPress={() => setEditRole('employee')}
+                        style={[
+                          styles.roleSelectBtn,
+                          {
+                            backgroundColor: editRole === 'employee' ? colors.primary : colors.inputBg,
+                            borderColor: colors.border,
+                            borderRadius: borderRadius.md,
+                          },
+                        ]}
+                      >
+                        <User size={15} color={editRole === 'employee' ? '#FFFFFF' : colors.textSecondary} />
+                        <Text
+                          style={[
+                            typography.caption,
+                            {
+                              color: editRole === 'employee' ? '#FFFFFF' : colors.textPrimary,
+                              fontWeight: '700',
+                            },
+                          ]}
+                        >
+                          Employee (Staff)
+                        </Text>
+                      </Pressable>
+
+                      <Pressable
+                        onPress={() => setEditRole('manager')}
+                        style={[
+                          styles.roleSelectBtn,
+                          {
+                            backgroundColor: editRole === 'manager' ? '#d97706' : colors.inputBg,
+                            borderColor: colors.border,
+                            borderRadius: borderRadius.md,
+                          },
+                        ]}
+                      >
+                        <Shield size={15} color={editRole === 'manager' ? '#FFFFFF' : colors.textSecondary} />
+                        <Text
+                          style={[
+                            typography.caption,
+                            {
+                              color: editRole === 'manager' ? '#FFFFFF' : colors.textPrimary,
+                              fontWeight: '700',
+                            },
+                          ]}
+                        >
+                          Manager (Approver)
+                        </Text>
+                      </Pressable>
+                    </View>
+                  </View>
+
+                  {/* PIN Field */}
+                  <View>
+                    <Text style={[typography.caption, { color: colors.textSecondary, marginBottom: 4, fontWeight: '700' }]}>
+                      LOGIN PIN (4-8 DIGITS)
+                    </Text>
+                    <TextInput
+                      value={editPin}
+                      onChangeText={setEditPin}
+                      placeholder="e.g. 1234"
+                      placeholderTextColor={colors.textTertiary}
+                      keyboardType="numeric"
+                      style={[
+                        styles.inputBox,
+                        {
+                          backgroundColor: colors.inputBg,
+                          borderColor: colors.inputBorder,
+                          color: colors.textPrimary,
+                          borderRadius: borderRadius.md,
+                        },
+                      ]}
+                    />
+                  </View>
+
+                  {/* Full Name */}
+                  <View>
+                    <Text style={[typography.caption, { color: colors.textSecondary, marginBottom: 4, fontWeight: '700' }]}>
+                      EMPLOYEE FULL NAME
+                    </Text>
+                    <TextInput
+                      value={editName}
+                      onChangeText={setEditName}
+                      style={[
+                        styles.inputBox,
+                        {
+                          backgroundColor: colors.inputBg,
+                          borderColor: colors.inputBorder,
+                          color: colors.textPrimary,
+                          borderRadius: borderRadius.md,
+                        },
+                      ]}
+                    />
+                  </View>
+
+                  {/* Service ID */}
+                  <View>
+                    <Text style={[typography.caption, { color: colors.textSecondary, marginBottom: 4, fontWeight: '700' }]}>
+                      EMPLOYEE SERVICE ID
+                    </Text>
+                    <TextInput
+                      value={editServiceId}
+                      onChangeText={setEditServiceId}
+                      placeholder="e.g. EMP003"
+                      placeholderTextColor={colors.textTertiary}
+                      style={[
+                        styles.inputBox,
+                        {
+                          backgroundColor: colors.inputBg,
+                          borderColor: colors.inputBorder,
+                          color: colors.textPrimary,
+                          borderRadius: borderRadius.md,
+                        },
+                      ]}
+                    />
+                  </View>
+
+                  {/* Department & Designation */}
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[typography.caption, { color: colors.textSecondary, marginBottom: 4, fontWeight: '700' }]}>
+                        DEPARTMENT
+                      </Text>
+                      <TextInput
+                        value={editDepartment}
+                        onChangeText={setEditDepartment}
+                        style={[
+                          styles.inputBox,
+                          {
+                            backgroundColor: colors.inputBg,
+                            borderColor: colors.inputBorder,
+                            color: colors.textPrimary,
+                            borderRadius: borderRadius.md,
+                          },
+                        ]}
+                      />
+                    </View>
+
+                    <View style={{ flex: 1 }}>
+                      <Text style={[typography.caption, { color: colors.textSecondary, marginBottom: 4, fontWeight: '700' }]}>
+                        DESIGNATION
+                      </Text>
+                      <TextInput
+                        value={editDesignation}
+                        onChangeText={setEditDesignation}
+                        style={[
+                          styles.inputBox,
+                          {
+                            backgroundColor: colors.inputBg,
+                            borderColor: colors.inputBorder,
+                            color: colors.textPrimary,
+                            borderRadius: borderRadius.md,
+                          },
+                        ]}
+                      />
+                    </View>
+                  </View>
+
+                  {/* Email & Phone */}
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[typography.caption, { color: colors.textSecondary, marginBottom: 4, fontWeight: '700' }]}>
+                        WORK EMAIL
+                      </Text>
+                      <TextInput
+                        value={editEmail}
+                        onChangeText={setEditEmail}
+                        placeholder="name@lunugamwehera.gov.lk"
+                        placeholderTextColor={colors.textTertiary}
+                        autoCapitalize="none"
+                        style={[
+                          styles.inputBox,
+                          {
+                            backgroundColor: colors.inputBg,
+                            borderColor: colors.inputBorder,
+                            color: colors.textPrimary,
+                            borderRadius: borderRadius.md,
+                          },
+                        ]}
+                      />
+                    </View>
+
+                    <View style={{ flex: 1 }}>
+                      <Text style={[typography.caption, { color: colors.textSecondary, marginBottom: 4, fontWeight: '700' }]}>
+                        PHONE NUMBER
+                      </Text>
+                      <TextInput
+                        value={editPhone}
+                        onChangeText={setEditPhone}
+                        placeholder="0771234567"
+                        placeholderTextColor={colors.textTertiary}
+                        keyboardType="phone-pad"
+                        style={[
+                          styles.inputBox,
+                          {
+                            backgroundColor: colors.inputBg,
+                            borderColor: colors.inputBorder,
+                            color: colors.textPrimary,
+                            borderRadius: borderRadius.md,
+                          },
+                        ]}
+                      />
+                    </View>
+                  </View>
+                </View>
+              )}
+            />
 
             <View style={styles.modalBtnRow}>
               <CustomButton
-                title="Keep Account"
+                title="Cancel"
                 variant="outline"
-                onPress={() => setDeleteModalVisible(false)}
+                onPress={() => setManageModalVisible(false)}
                 style={{ flex: 1 }}
               />
               <CustomButton
-                title="Revoke & Delete"
-                variant="danger"
-                loading={isDeleting}
-                onPress={handleConfirmDelete}
-                style={{ flex: 1 }}
+                title="Save Changes"
+                variant="primary"
+                loading={isSavingManage}
+                onPress={handleSaveManage}
+                style={{ flex: 1.5 }}
               />
             </View>
           </View>
@@ -723,9 +1246,27 @@ export const MobileUsersManagement: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    gap: 12,
   },
-  topBar: {
+  listContent: {
+    gap: 10,
+  },
+  listHeaderWrapper: {
+    gap: 10,
+    marginBottom: 4,
+  },
+  statsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  statCard: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  searchBarRow: {
     flexDirection: 'row',
     gap: 8,
     alignItems: 'center',
@@ -749,125 +1290,165 @@ const styles = StyleSheet.create({
     height: 42,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
   },
   filterRow: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 6,
     flexWrap: 'wrap',
   },
   filterChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
     borderWidth: 1,
   },
-  userCard: {
-    borderWidth: 1,
+  card: {
     padding: 14,
+    borderWidth: 1,
     gap: 10,
   },
   cardHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
     gap: 10,
+    alignItems: 'flex-start',
   },
   avatar: {
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+  },
+  selfBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  idBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  infoStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+  },
+  pinDisplayBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: 1,
+  },
+  cardActionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  actionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    height: 36,
+    borderWidth: 1,
+  },
+  emptyContainer: {
+    padding: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    marginTop: 20,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 480,
+    padding: 18,
+    borderWidth: 1,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(150,150,150,0.2)',
+    paddingBottom: 12,
+  },
+  modalIconWrap: {
     width: 36,
     height: 36,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  selfTag: {
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-  },
-  roleBadge: {
+  pinInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderWidth: 1,
-  },
-  cardDetails: {
-    gap: 4,
-  },
-  infoPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    alignSelf: 'flex-start',
-  },
-  cardActions: {
-    flexDirection: 'row',
-    gap: 8,
-    paddingTop: 10,
-    borderTopWidth: 1,
-  },
-  actionBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  emptyState: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 30,
-    borderWidth: 1,
-    gap: 6,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  modalCard: {
-    width: '100%',
-    maxWidth: 420,
-    borderWidth: 1,
-    padding: 20,
-    gap: 14,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  inputField: {
-    marginBottom: 12,
-  },
-  rolePickerRow: {
-    flexDirection: 'row',
     gap: 10,
+    paddingHorizontal: 14,
+    height: 52,
+    borderWidth: 1.5,
   },
-  rolePickerOption: {
+  pinTextInput: {
     flex: 1,
+    fontSize: 20,
+    fontWeight: '800',
+    letterSpacing: 4,
+  },
+  presetChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 10,
-  },
-  textInput: {
-    borderWidth: 1,
+    gap: 4,
+    paddingVertical: 6,
     paddingHorizontal: 12,
-    paddingVertical: 8,
-    fontSize: 14,
+    borderWidth: 1,
+  },
+  loginHintBox: {
+    padding: 10,
+    borderWidth: 1,
   },
   modalBtnRow: {
     flexDirection: 'row',
     gap: 10,
-    marginTop: 4,
+    marginTop: 14,
   },
-  deleteIconWrap: {
-    width: 50,
-    height: 50,
+  toggleCardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 12,
+    borderWidth: 1,
+  },
+  roleBtnGroup: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  roleSelectBtn: {
+    flex: 1,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 6,
+    height: 40,
+    borderWidth: 1,
+  },
+  inputBox: {
+    height: 42,
+    paddingHorizontal: 12,
+    fontSize: 13,
+    borderWidth: 1,
   },
 });

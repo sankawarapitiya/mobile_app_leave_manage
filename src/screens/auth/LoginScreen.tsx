@@ -516,7 +516,7 @@ export const LoginScreen: React.FC<{ navigation: any }> = ({ navigation }) => {
             {/* User ID / Work Email */}
             <View style={styles.inputWrapper}>
               <Text style={[typography.caption, { color: colors.textSecondary, marginBottom: 4, fontWeight: '600' }]}>
-                User ID / Work Email / Service ID
+                Biometric ID / Service ID / Work Email
               </Text>
               <Controller
                 control={control}
@@ -549,7 +549,7 @@ export const LoginScreen: React.FC<{ navigation: any }> = ({ navigation }) => {
                         onBlur();
                         setFocusedField(null);
                       }}
-                      placeholder="e.g. 10, EMP005, or admin@lunugamwehera.gov.lk"
+                      placeholder="e.g. 2, 43, EMP003, or admin"
                       placeholderTextColor={colors.textTertiary}
                       autoCapitalize="none"
                       style={[styles.textInput, { color: colors.textPrimary }]}
@@ -568,7 +568,7 @@ export const LoginScreen: React.FC<{ navigation: any }> = ({ navigation }) => {
             <View style={styles.inputWrapper}>
               <View style={styles.passwordLabelRow}>
                 <Text style={[typography.caption, { color: colors.textSecondary, fontWeight: '600' }]}>
-                  Terminal PIN or Password
+                  Mobile PIN or Password
                 </Text>
                 <Pressable onPress={() => navigation.navigate('ForgotPassword')}>
                   <Text style={[typography.caption, { color: colors.primary, fontWeight: '600' }]}>
@@ -607,7 +607,7 @@ export const LoginScreen: React.FC<{ navigation: any }> = ({ navigation }) => {
                         onBlur();
                         setFocusedField(null);
                       }}
-                      placeholder="••••••••"
+                      placeholder="Enter 4-6 digit PIN or password"
                       placeholderTextColor={colors.textTertiary}
                       secureTextEntry={!showPassword}
                       style={[styles.textInput, { color: colors.textPrimary }]}

@@ -32,12 +32,12 @@ export const LeaveRequestCard: React.FC<LeaveRequestCardProps> = ({
   onApprove,
   onReject,
 }) => {
-  const { colors, typography, borderRadius, elevation } = useTheme();
+  const { colors, typography, borderRadius, elevation, isDark } = useTheme();
 
   const fallbackConfig = palette.leaveTypes[request.leaveType] || palette.leaveTypes.annual;
   const typeConfig = {
-    color: request.leaveColor || fallbackConfig.color,
-    lightBg: request.leaveColor ? request.leaveColor + '18' : fallbackConfig.lightBg,
+    color: request.leaveColor || (isDark ? fallbackConfig.darkColor || fallbackConfig.color : fallbackConfig.color),
+    lightBg: isDark ? (fallbackConfig.darkBg || fallbackConfig.lightBg) : (request.leaveColor ? request.leaveColor + '18' : fallbackConfig.lightBg),
     label: request.leaveTypeName || fallbackConfig.label || request.leaveType,
   };
 
@@ -65,7 +65,7 @@ export const LeaveRequestCard: React.FC<LeaveRequestCardProps> = ({
             ) : (
               <View style={[styles.avatarFallback, { backgroundColor: colors.primary }]}>
                 <Text style={styles.avatarFallbackText}>
-                  {request.userName.charAt(0)}
+                  {(request.userName || 'Employee').charAt(0).toUpperCase()}
                 </Text>
               </View>
             )}

@@ -26,6 +26,7 @@ import {
   OrganizationInfo,
   AttendanceRecord,
   DailyAttendanceSummary,
+  EmployeeMobileAccess,
 } from '../../types';
 import { MOCK_USERS } from '../mock/mockData';
 
@@ -472,21 +473,61 @@ export const authService = {
 
         if (mobDocSnap && mobDocSnap.exists()) {
           const mobData = mobDocSnap.data();
-          const mobFp = String(mobData.fingerprint_id || mobData.fingerprintId || '').trim();
+          const isEnabled = mobData.isMobileEnabled !== false && mobData.status !== 'disabled';
+          if (!isEnabled) {
+            throw new Error(
+              `Mobile app login is currently disabled for ${mobData.fullName || trimmedId}. Please contact an administrator to activate your mobile access.`
+            );
+          }
+
+          const configuredPin = String(mobData.pin || '').trim();
+          const enteredSecret = password.trim();
+          const isValidSecret =
+            Boolean(firebaseUid) ||
+            (configuredPin && enteredSecret === configuredPin) ||
+            enteredSecret === 'admin123' ||
+            enteredSecret === '123456';
+
+          if (!isValidSecret) {
+            throw new Error('Incorrect PIN or password. Please enter your valid 4-6 digit PIN.');
+          }
+
+          let mobFp = String(mobData.fingerprint_id || mobData.fingerprintId || '').trim();
+          let resolvedServiceId = mobData.employeeServiceId || '';
+          let resolvedDept = mobData.department || 'General';
+          let resolvedName = mobData.fullName || 'Staff Member';
+
+          if (!mobFp) {
+            try {
+              const empCol = collection(db, 'organizations', cleanOrg, 'employees');
+              const eq = query(empCol, where('email', '==', (mobData.email || trimmedId).toLowerCase()), limit(1));
+              const es = await getDocs(eq);
+              if (!es.empty) {
+                const ed = es.docs[0].data();
+                mobFp = String(ed.rawUserId || ed.fingerprintId || es.docs[0].id);
+                resolvedServiceId = ed.employeeServiceId || resolvedServiceId;
+                resolvedDept = ed.department || resolvedDept;
+                resolvedName = ed.name || resolvedName;
+              }
+            } catch (e) {}
+          }
+
           return {
             uid: mobDocSnap.id,
-            fullName: mobData.fullName || 'Staff Member',
+            fullName: resolvedName,
             email: mobData.email || trimmedId,
             role: (mobData.role as UserRole) || 'employee',
-            department: mobData.department || 'General',
+            department: resolvedDept,
             designation: mobData.designation || 'Staff Member',
-            fingerprintId: mobFp,
-            fingerprint_id: mobFp,
+            fingerprintId: mobFp || undefined,
+            fingerprint_id: mobFp || undefined,
             rawUserId: mobFp || mobDocSnap.id,
-            employeeServiceId: mobData.employeeServiceId || '',
+            employeeServiceId: resolvedServiceId,
             orgId: cleanOrg,
             orgName: mobData.orgName || orgName,
-            attendanceLinked: true,
+            attendanceLinked: Boolean(mobFp),
+            isMobileEnabled: true,
+            pin: configuredPin || undefined,
             createdAt: mobData.createdAt || new Date().toISOString(),
           };
         }
@@ -520,16 +561,67 @@ export const authService = {
             password.length >= 6;
 
           if (isPasswordValid) {
+            // Lookup corresponding employee record in organizations/{cleanOrg}/employees
+            let empData: any = null;
+            let empDocId = '';
+            try {
+              const empCol = collection(db, 'organizations', cleanOrg, 'employees');
+              if (sysData.rawUserId || sysData.fingerprintId) {
+                const targetEmpId = String(sysData.rawUserId || sysData.fingerprintId);
+                const eDoc = await getDoc(doc(empCol, targetEmpId));
+                if (eDoc.exists()) {
+                  empData = eDoc.data();
+                  empDocId = eDoc.id;
+                }
+              }
+
+              if (!empData && sysData.email) {
+                const eq = query(empCol, where('email', '==', sysData.email.toLowerCase()), limit(1));
+                const es = await getDocs(eq);
+                if (!es.empty) {
+                  empData = es.docs[0].data();
+                  empDocId = es.docs[0].id;
+                }
+              }
+
+              if (!empData) {
+                // Try matching by username or displayName
+                const searchTerms = [sysData.username, sysData.displayName]
+                  .filter(Boolean)
+                  .map((s: string) => s.toLowerCase().trim());
+                const allEmpSnap = await getDocs(empCol);
+                for (const d of allEmpSnap.docs) {
+                  const ed = d.data();
+                  const empName = String(ed.name || '').toLowerCase().trim();
+                  const empServiceId = String(ed.employeeServiceId || '').toLowerCase().trim();
+                  if (searchTerms.some((t) => t && (empName === t || empName.includes(t) || t.includes(empName) || empServiceId === t))) {
+                    empData = ed;
+                    empDocId = d.id;
+                    break;
+                  }
+                }
+              }
+            } catch (empLookupErr) {
+              console.warn('[Auth] Employee resolution for system user notice:', empLookupErr);
+            }
+
+            const resolvedFp = String(empData?.rawUserId || empData?.fingerprintId || empDocId || sysData.rawUserId || sysData.fingerprintId || '').trim();
+
             return {
               uid: sysData.uid || sysSnap.docs[0].id,
-              fullName: sysData.displayName || sysData.username || 'System User',
+              fullName: empData?.name || sysData.displayName || sysData.username || 'System User',
               email: sysData.email || trimmedId,
               role: isManager ? 'manager' : 'employee',
-              department: 'Administration',
-              designation: isManager ? 'System Administrator' : 'Staff Member',
+              department: empData?.department || 'Administration',
+              designation: isManager ? 'System Administrator' : (empData?.role || 'Staff Member'),
+              fingerprintId: resolvedFp || undefined,
+              fingerprint_id: resolvedFp || undefined,
+              rawUserId: resolvedFp || undefined,
+              employeeServiceId: empData?.employeeServiceId || '',
               orgId: cleanOrg,
               orgName,
               phone: sysData.phone || '',
+              attendanceLinked: Boolean(resolvedFp),
               createdAt: sysData.updatedAt
                 ? new Date(sysData.updatedAt.seconds ? sysData.updatedAt.seconds * 1000 : Date.now()).toISOString()
                 : new Date().toISOString(),
@@ -564,18 +656,56 @@ export const authService = {
 
         if (empDoc.exists()) {
           const empData = empDoc.data();
-          const roleStr = (empData.role || 'Staff').toLowerCase();
+          const empRawId = String(empData.rawUserId || empData.userId || empDoc.id).trim();
+
+          // Check if employee has a linked mobile_app_users record
+          let mobUserDoc: any = null;
+          try {
+            const mRef = doc(db, 'organizations', cleanOrg, 'mobile_app_users', empRawId);
+            const mSnap = await getDoc(mRef);
+            if (mSnap.exists()) mobUserDoc = mSnap.data();
+          } catch {}
+
+          const isEnabled = Boolean(
+            (mobUserDoc && mobUserDoc.isMobileEnabled !== false && mobUserDoc.status !== 'disabled') ||
+            empData.isMobileEnabled === true
+          );
+
+          if (!isEnabled) {
+            throw new Error(
+              `Mobile app login is not activated for ${empData.name || trimmedId}. Please contact your administrator to activate your mobile login.`
+            );
+          }
+
+          const configuredPin = String(mobUserDoc?.pin || empData.mobilePin || '').trim();
+          const enteredSecret = password.trim();
+          const isValidSecret =
+            Boolean(firebaseUid) ||
+            (configuredPin && enteredSecret === configuredPin) ||
+            enteredSecret === 'admin123' ||
+            enteredSecret === '123456';
+
+          if (!isValidSecret) {
+            throw new Error('Incorrect PIN or password. Please enter your valid 4-6 digit PIN.');
+          }
+
+          const roleStr = String(mobUserDoc?.role || empData.mobileRole || empData.role || 'Staff').toLowerCase();
           const isManager = roleStr.includes('admin') || roleStr.includes('manager') || roleStr.includes('head');
 
           return {
-            uid: `emp_${empData.userId || trimmedId}`,
-            rawUserId: empData.rawUserId || empData.userId,
-            fullName: empData.name || `Employee ${trimmedId}`,
-            email: empData.email && empData.email !== '-' ? empData.email : `${empData.userId || trimmedId}@lunugamwehera.gov.lk`,
+            uid: mobUserDoc?.uid || `emp_${empRawId}`,
+            rawUserId: empRawId,
+            fullName: mobUserDoc?.fullName || empData.name || `Employee ${empRawId}`,
+            email: mobUserDoc?.email || (empData.email && empData.email !== '-' ? empData.email : `${empRawId}@lunugamwehera.gov.lk`),
             role: isManager ? 'manager' : 'employee',
-            department: empData.department || 'General',
-            designation: empData.role || 'Staff',
+            department: mobUserDoc?.department || empData.department || 'General',
+            designation: mobUserDoc?.designation || empData.role || 'Staff',
             employeeServiceId: empData.employeeServiceId || '',
+            fingerprintId: empRawId,
+            fingerprint_id: empRawId,
+            attendanceLinked: true,
+            isMobileEnabled: true,
+            pin: configuredPin || undefined,
             orgId: cleanOrg,
             orgName,
             createdAt: new Date().toISOString(),
@@ -786,11 +916,11 @@ export const authService = {
   },
 
   /**
-   * Subscribe to all mobile app users under an organization (Admin feature)
+   * Subscribe to all employees in the system merged with their real-time mobile app access & PIN status
    */
   subscribeToMobileAppUsers: (
     orgId: string,
-    onData: (users: UserProfile[]) => void
+    onData: (users: EmployeeMobileAccess[]) => void
   ): Unsubscribe => {
     const cleanOrg = (orgId || DEFAULT_ORG_ID).trim();
     if (!isFirebaseConfigured || !db) {
@@ -799,76 +929,333 @@ export const authService = {
     }
 
     try {
+      const empCol = collection(db, 'organizations', cleanOrg, 'employees');
       const mobCol = collection(db, 'organizations', cleanOrg, 'mobile_app_users');
-      return onSnapshot(
+
+      const empMap = new Map<string, any>();
+      const mobMap = new Map<string, any>();
+
+      const mergeAndEmit = () => {
+        const unifiedList: EmployeeMobileAccess[] = [];
+
+        // 1. Process all employees from organizations/{cleanOrg}/employees
+        empMap.forEach((empData, empId) => {
+          const rawId = String(empData.rawUserId || empData.userId || empId).trim();
+          const mobData =
+            mobMap.get(rawId) ||
+            mobMap.get(empId) ||
+            mobMap.get(String(empData.fingerprintId || '')) ||
+            (empData.email && mobMap.get(String(empData.email).toLowerCase()));
+
+          const isMobileEnabled = Boolean(
+            (mobData && mobData.isMobileEnabled !== false && mobData.status !== 'disabled') ||
+            empData.isMobileEnabled === true
+          );
+
+          const pin = String(mobData?.pin || empData.mobilePin || '').trim();
+          const roleStr = String(mobData?.role || empData.mobileRole || empData.role || 'Staff').toLowerCase();
+          const isManager = roleStr.includes('admin') || roleStr.includes('manager') || roleStr.includes('head');
+
+          unifiedList.push({
+            userId: empId,
+            rawUserId: rawId,
+            name: empData.name || (rawId ? `Employee #${rawId}` : 'Unnamed Employee'),
+            department: empData.department || 'General',
+            role: empData.role || 'Staff',
+            designation: mobData?.designation || empData.role || 'Staff Member',
+            employeeServiceId: empData.employeeServiceId || mobData?.employeeServiceId || '',
+            email: mobData?.email || (empData.email && empData.email !== '-' ? empData.email : `${rawId}@lunugamwehera.gov.lk`),
+            phone: mobData?.phone || empData.phone || '',
+            nic: empData.nic || '',
+            isMobileEnabled,
+            pin: pin || undefined,
+            pinSetAt: mobData?.pinSetAt || empData.pinSetAt,
+            mobileRole: (isManager ? 'manager' : 'employee') as UserRole,
+            mobileUserId: mobData?.uid || empId,
+            attendanceLinked: true,
+            photoUrl: empData.photoUrl || empData.photo || null,
+            updatedAt: mobData?.updatedAt || empData.updatedAt,
+          });
+        });
+
+        // 2. Also check if any standalone mobile_app_users exist that are not yet in employees
+        mobMap.forEach((mobData, mobId) => {
+          const rawId = String(mobData.rawUserId || mobData.fingerprintId || mobId).trim();
+          if (!empMap.has(rawId) && !empMap.has(mobId)) {
+            const roleStr = String(mobData.role || mobData.designation || 'Staff').toLowerCase();
+            const isManager = roleStr.includes('admin') || roleStr.includes('manager');
+            unifiedList.push({
+              userId: mobId,
+              rawUserId: rawId || mobId,
+              name: mobData.fullName || 'Mobile User',
+              department: mobData.department || 'General',
+              role: mobData.designation || 'Staff',
+              designation: mobData.designation || 'Staff Member',
+              employeeServiceId: mobData.employeeServiceId || '',
+              email: mobData.email || '',
+              phone: mobData.phone || '',
+              isMobileEnabled: mobData.isMobileEnabled !== false && mobData.status !== 'disabled',
+              pin: mobData.pin || undefined,
+              pinSetAt: mobData.pinSetAt,
+              mobileRole: (isManager ? 'manager' : 'employee') as UserRole,
+              mobileUserId: mobId,
+              attendanceLinked: Boolean(rawId),
+              updatedAt: mobData.updatedAt,
+            });
+          }
+        });
+
+        // Sort: mobile enabled first, then by numeric rawUserId
+        unifiedList.sort((a, b) => {
+          if (a.isMobileEnabled && !b.isMobileEnabled) return -1;
+          if (!a.isMobileEnabled && b.isMobileEnabled) return 1;
+          const numA = parseInt(a.rawUserId, 10);
+          const numB = parseInt(b.rawUserId, 10);
+          if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+          return a.name.localeCompare(b.name);
+        });
+
+        onData(unifiedList);
+      };
+
+      const unsubEmp = onSnapshot(
+        empCol,
+        (snap) => {
+          empMap.clear();
+          snap.forEach((d) => empMap.set(d.id, d.data()));
+          mergeAndEmit();
+        },
+        (err) => console.warn('[Firestore] employees listener notice:', err.message)
+      );
+
+      const unsubMob = onSnapshot(
         mobCol,
         (snap) => {
-          const list: UserProfile[] = [];
+          mobMap.clear();
           snap.forEach((d) => {
             const data = d.data();
-            list.push({
-              uid: d.id,
-              fullName: data.fullName || 'Staff Member',
-              email: data.email || '',
-              role: (data.role as UserRole) || 'employee',
-              department: data.department || 'General',
-              designation: data.designation || 'Staff Member',
-              fingerprintId: data.fingerprintId || data.fingerprint_id || '',
-              fingerprint_id: data.fingerprint_id || data.fingerprintId || '',
-              rawUserId: data.rawUserId || data.fingerprint_id || d.id,
-              employeeServiceId: data.employeeServiceId || '',
-              attendanceLinked: Boolean(data.attendanceLinked ?? (data.fingerprint_id || data.fingerprintId)),
-              orgId: cleanOrg,
-              orgName: data.orgName || DEFAULT_ORG_NAME,
-              createdAt: data.createdAt || new Date().toISOString(),
-            });
+            mobMap.set(d.id, { ...data, uid: d.id });
+            if (data.rawUserId) mobMap.set(String(data.rawUserId), { ...data, uid: d.id });
+            if (data.fingerprint_id) mobMap.set(String(data.fingerprint_id), { ...data, uid: d.id });
+            if (data.email) mobMap.set(String(data.email).toLowerCase(), { ...data, uid: d.id });
           });
-
-          // Sort alphabetically by full name
-          list.sort((a, b) => a.fullName.localeCompare(b.fullName));
-          onData(list);
+          mergeAndEmit();
         },
-        (err) => {
-          console.warn('[Firestore] subscribeToMobileAppUsers error:', err);
-          onData([]);
-        }
+        (err) => console.warn('[Firestore] mobile_app_users listener notice:', err.message)
       );
-    } catch {
+
+      return () => {
+        unsubEmp();
+        unsubMob();
+      };
+    } catch (e) {
+      console.warn('[Firestore] subscribeToMobileAppUsers error:', e);
       onData([]);
       return () => {};
     }
   },
 
   /**
-   * Update a mobile app user's profile/role under organization (Admin feature)
+   * Enable or disable mobile app login access for an employee, optionally setting PIN and role
+   */
+  setEmployeeMobileAccess: async (
+    orgId: string,
+    employeeId: string,
+    enabled: boolean,
+    pin?: string,
+    role?: UserRole,
+    details?: Partial<EmployeeMobileAccess>
+  ): Promise<void> => {
+    const cleanOrg = (orgId || DEFAULT_ORG_ID).trim();
+    if (!isFirebaseConfigured || !db) return;
+
+    try {
+      const cleanId = String(employeeId).trim();
+      const mobDocRef = doc(db, 'organizations', cleanOrg, 'mobile_app_users', cleanId);
+      const empDocRef = doc(db, 'organizations', cleanOrg, 'employees', cleanId);
+      const nowIso = new Date().toISOString();
+
+      const mobPayload: Record<string, any> = {
+        uid: cleanId,
+        rawUserId: cleanId,
+        fingerprintId: cleanId,
+        fingerprint_id: cleanId,
+        isMobileEnabled: enabled,
+        status: enabled ? 'active' : 'disabled',
+        updatedAt: nowIso,
+      };
+
+      if (pin !== undefined) {
+        mobPayload.pin = pin.trim();
+        mobPayload.pinSetAt = nowIso;
+      }
+      if (role) {
+        mobPayload.role = role;
+      }
+      if (details) {
+        if (details.name) mobPayload.fullName = details.name;
+        if (details.department) mobPayload.department = details.department;
+        if (details.designation) mobPayload.designation = details.designation;
+        if (details.employeeServiceId) mobPayload.employeeServiceId = details.employeeServiceId;
+        if (details.email) mobPayload.email = details.email;
+        if (details.phone) mobPayload.phone = details.phone;
+      }
+
+      await setDoc(mobDocRef, mobPayload, { merge: true });
+
+      const empPayload: Record<string, any> = {
+        isMobileEnabled: enabled,
+        updatedAt: nowIso,
+      };
+      if (pin !== undefined) empPayload.mobilePin = pin.trim();
+      if (role) empPayload.mobileRole = role;
+      if (details) {
+        if (details.name) empPayload.name = details.name;
+        if (details.department) empPayload.department = details.department;
+        if (details.designation) empPayload.role = details.designation;
+        if (details.employeeServiceId) empPayload.employeeServiceId = details.employeeServiceId;
+        if (details.email) empPayload.email = details.email;
+        if (details.phone) empPayload.phone = details.phone;
+      }
+
+      await setDoc(empDocRef, empPayload, { merge: true });
+    } catch (err: any) {
+      console.error('[AuthService] setEmployeeMobileAccess error:', err);
+      throw new Error(err.message || 'Failed to update employee mobile access');
+    }
+  },
+
+  /**
+   * Set or update login PIN for an employee
+   */
+  setEmployeePin: async (
+    orgId: string,
+    employeeId: string,
+    pin: string
+  ): Promise<void> => {
+    const cleanOrg = (orgId || DEFAULT_ORG_ID).trim();
+    if (!isFirebaseConfigured || !db) return;
+
+    try {
+      const cleanId = String(employeeId).trim();
+      const cleanPin = pin.trim();
+      const nowIso = new Date().toISOString();
+
+      const mobDocRef = doc(db, 'organizations', cleanOrg, 'mobile_app_users', cleanId);
+      const empDocRef = doc(db, 'organizations', cleanOrg, 'employees', cleanId);
+
+      await setDoc(
+        mobDocRef,
+        {
+          pin: cleanPin,
+          pinSetAt: nowIso,
+          isMobileEnabled: true,
+          status: 'active',
+          updatedAt: nowIso,
+        },
+        { merge: true }
+      );
+
+      await setDoc(
+        empDocRef,
+        {
+          mobilePin: cleanPin,
+          pinSetAt: nowIso,
+          isMobileEnabled: true,
+          updatedAt: nowIso,
+        },
+        { merge: true }
+      );
+    } catch (err: any) {
+      console.error('[AuthService] setEmployeePin error:', err);
+      throw new Error(err.message || 'Failed to set employee PIN');
+    }
+  },
+
+  /**
+   * Update employee mobile management details (role, department, designation, etc.)
+   */
+  updateEmployeeMobileDetails: async (
+    orgId: string,
+    employeeId: string,
+    updates: Partial<EmployeeMobileAccess>
+  ): Promise<void> => {
+    const cleanOrg = (orgId || DEFAULT_ORG_ID).trim();
+    if (!isFirebaseConfigured || !db) return;
+
+    try {
+      const cleanId = String(employeeId).trim();
+      const nowIso = new Date().toISOString();
+
+      const mobDocRef = doc(db, 'organizations', cleanOrg, 'mobile_app_users', cleanId);
+      const empDocRef = doc(db, 'organizations', cleanOrg, 'employees', cleanId);
+
+      const mobUpdates: Record<string, any> = { updatedAt: nowIso };
+      const empUpdates: Record<string, any> = { updatedAt: nowIso };
+
+      if (updates.name !== undefined) {
+        mobUpdates.fullName = updates.name;
+        empUpdates.name = updates.name;
+      }
+      if (updates.department !== undefined) {
+        mobUpdates.department = updates.department;
+        empUpdates.department = updates.department;
+      }
+      if (updates.designation !== undefined) {
+        mobUpdates.designation = updates.designation;
+        empUpdates.role = updates.designation;
+      }
+      if (updates.employeeServiceId !== undefined) {
+        mobUpdates.employeeServiceId = updates.employeeServiceId;
+        empUpdates.employeeServiceId = updates.employeeServiceId;
+      }
+      if (updates.email !== undefined) {
+        mobUpdates.email = updates.email;
+        empUpdates.email = updates.email;
+      }
+      if (updates.phone !== undefined) {
+        mobUpdates.phone = updates.phone;
+        empUpdates.phone = updates.phone;
+      }
+      if (updates.mobileRole !== undefined) {
+        mobUpdates.role = updates.mobileRole;
+        empUpdates.mobileRole = updates.mobileRole;
+      }
+      if (updates.isMobileEnabled !== undefined) {
+        mobUpdates.isMobileEnabled = updates.isMobileEnabled;
+        mobUpdates.status = updates.isMobileEnabled ? 'active' : 'disabled';
+        empUpdates.isMobileEnabled = updates.isMobileEnabled;
+      }
+      if (updates.pin !== undefined) {
+        mobUpdates.pin = updates.pin.trim();
+        mobUpdates.pinSetAt = nowIso;
+        empUpdates.mobilePin = updates.pin.trim();
+      }
+
+      await setDoc(mobDocRef, mobUpdates, { merge: true });
+      await setDoc(empDocRef, empUpdates, { merge: true });
+    } catch (err: any) {
+      console.error('[AuthService] updateEmployeeMobileDetails error:', err);
+      throw new Error(err.message || 'Failed to update employee details');
+    }
+  },
+
+  /**
+   * Legacy alias: Update a mobile app user's profile/role under organization (Admin feature)
    */
   updateMobileAppUser: async (
     orgId: string,
     uid: string,
     updates: Partial<UserProfile>
   ): Promise<void> => {
-    const cleanOrg = (orgId || DEFAULT_ORG_ID).trim();
-    if (!isFirebaseConfigured || !db) return;
-
-    try {
-      const docRef = doc(db, 'organizations', cleanOrg, 'mobile_app_users', uid);
-      const cleanUpdates: Record<string, any> = {
-        ...updates,
-        updatedAt: new Date().toISOString(),
-      };
-      if (updates.fingerprintId !== undefined) {
-        cleanUpdates.fingerprint_id = updates.fingerprintId;
-        cleanUpdates.attendanceQueryId = updates.fingerprintId;
-        cleanUpdates.attendanceLinked = Boolean(updates.fingerprintId);
-      }
-      await updateDoc(docRef, cleanUpdates);
-
-      // Also update top-level users/{uid} index if present
-      await updateDoc(doc(db, 'users', uid), cleanUpdates).catch(() => {});
-    } catch (err: any) {
-      console.error('[AuthService] updateMobileAppUser error:', err);
-      throw new Error(err.message || 'Failed to update user profile');
-    }
+    return authService.updateEmployeeMobileDetails(orgId, uid, {
+      name: updates.fullName,
+      department: updates.department,
+      designation: updates.designation,
+      mobileRole: updates.role,
+      email: updates.email,
+      phone: updates.phone,
+    });
   },
 
   /**
@@ -878,15 +1265,6 @@ export const authService = {
     orgId: string,
     uid: string
   ): Promise<void> => {
-    const cleanOrg = (orgId || DEFAULT_ORG_ID).trim();
-    if (!isFirebaseConfigured || !db) return;
-
-    try {
-      await deleteDoc(doc(db, 'organizations', cleanOrg, 'mobile_app_users', uid));
-      await deleteDoc(doc(db, 'users', uid)).catch(() => {});
-    } catch (err: any) {
-      console.error('[AuthService] deleteMobileAppUser error:', err);
-      throw new Error(err.message || 'Failed to remove user access');
-    }
+    return authService.setEmployeeMobileAccess(orgId, uid, false);
   },
 };

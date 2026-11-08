@@ -136,7 +136,7 @@ export const ProfileScreen: React.FC<{ navigation?: any }> = ({ navigation }) =>
               <User size={13} color="#FFFFFF" />
             )}
             <Text style={[typography.caption, { color: '#FFFFFF', fontWeight: '700' }]}>
-              ACTIVE ROLE: {activeRole.toUpperCase()}
+              ACTIVE ROLE: {String(activeRole || 'USER').toUpperCase()}
             </Text>
           </View>
         </View>
@@ -324,7 +324,7 @@ export const ProfileScreen: React.FC<{ navigation?: any }> = ({ navigation }) =>
                         { color: colors.textPrimary, fontWeight: '700' },
                       ]}
                     >
-                      Manage Mobile App Users
+                      Manage Employees & Mobile Access
                     </Text>
                     <Text
                       style={[
@@ -332,7 +332,7 @@ export const ProfileScreen: React.FC<{ navigation?: any }> = ({ navigation }) =>
                         { color: colors.textSecondary },
                       ]}
                     >
-                      View, edit roles, or link biometric IDs for all members
+                      View all staff, enable mobile login, set PINs, or edit roles
                     </Text>
                   </View>
                   <ChevronRight size={18} color={colors.textTertiary} />

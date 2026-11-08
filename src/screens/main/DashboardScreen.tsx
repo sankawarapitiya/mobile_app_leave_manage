@@ -76,10 +76,15 @@ export const DashboardScreen: React.FC<{ navigation: any }> = ({ navigation }) =
     );
 
     // Subscribe to User Leave Requests
-    const unsubRequests = leaveService.subscribeToUserRequests(user.uid, (data) => {
-      setRequests(data);
-      setLoading(false);
-    });
+    const unsubRequests = leaveService.subscribeToUserRequests(
+      user.uid,
+      (data) => {
+        setRequests(data);
+        setLoading(false);
+      },
+      user.orgId || currentOrgId,
+      fpId
+    );
 
     // Subscribe to Company Holidays under organization in Firestore
     const targetOrg = user?.orgId || currentOrgId;
@@ -108,7 +113,11 @@ export const DashboardScreen: React.FC<{ navigation: any }> = ({ navigation }) =
   };
 
   const upcomingApprovedLeave = requests.find(
-    (r) => r.status === 'approved' && new Date(r.startDate) >= new Date('2026-01-01')
+    (r) =>
+      (r.status === 'approved' || String(r.status || '').toLowerCase() === 'approved') &&
+      Boolean(r.startDate || (r as any).start_date) &&
+      !isNaN(new Date(r.startDate || (r as any).start_date).getTime()) &&
+      new Date(r.startDate || (r as any).start_date) >= new Date(new Date().setHours(0, 0, 0, 0))
   );
 
   return (
@@ -240,55 +249,108 @@ export const DashboardScreen: React.FC<{ navigation: any }> = ({ navigation }) =
             {/* Dynamic Leave Balance Grid from Cloud Firestore */}
             {balances?.balances && balances.balances.length > 0 ? (
               <View style={styles.balanceGrid}>
-                {Array.from({ length: Math.ceil(balances.balances.length / 2) }).map((_, rowIdx) => {
-                  const first = balances.balances![rowIdx * 2];
-                  const second = balances.balances![rowIdx * 2 + 1];
-                  return (
-                    <View key={`bal_row_${rowIdx}`} style={styles.gridRow}>
-                      <LeaveBalanceRingCard
-                        title={first.leaveTypeName}
-                        code={first.code}
-                        total={first.allocatedDays + (first.carriedForwardDays || 0)}
-                        used={first.usedDays}
-                        pending={first.pendingDays || 0}
-                        remaining={first.remainingDays}
-                        accentColor={first.color || colors.primary}
-                        isPaid={first.isPaid}
-                      />
-                      {second ? (
-                        <LeaveBalanceRingCard
-                          title={second.leaveTypeName}
-                          code={second.code}
-                          total={second.allocatedDays + (second.carriedForwardDays || 0)}
-                          used={second.usedDays}
-                          pending={second.pendingDays || 0}
-                          remaining={second.remainingDays}
-                          accentColor={second.color || colors.primary}
-                          isPaid={second.isPaid}
-                        />
-                      ) : (
-                        <View style={{ flex: 1, minWidth: 155 }} />
-                      )}
-                    </View>
+                {(() => {
+                  const quotaBalances = balances.balances.filter(
+                    (b) => (b.allocatedDays + (b.carriedForwardDays || 0)) > 0 || b.usedDays > 0
                   );
-                })}
+                  const quotaFreeBalances = balances.balances.filter(
+                    (b) => (b.allocatedDays + (b.carriedForwardDays || 0)) === 0 && b.usedDays === 0
+                  );
+                  const displayRings = quotaBalances.length > 0 ? quotaBalances : balances.balances;
+
+                  return (
+                    <>
+                      {Array.from({ length: Math.ceil(displayRings.length / 2) }).map((_, rowIdx) => {
+                        const first = displayRings[rowIdx * 2];
+                        const second = displayRings[rowIdx * 2 + 1];
+                        return (
+                          <View key={`bal_row_${rowIdx}`} style={styles.gridRow}>
+                            <LeaveBalanceRingCard
+                              title={first.leaveTypeName}
+                              code={first.code}
+                              total={first.allocatedDays + (first.carriedForwardDays || 0)}
+                              used={first.usedDays}
+                              pending={first.pendingDays || 0}
+                              remaining={first.remainingDays}
+                              accentColor={first.color || colors.primary}
+                              isPaid={first.isPaid}
+                            />
+                            {second ? (
+                              <LeaveBalanceRingCard
+                                title={second.leaveTypeName}
+                                code={second.code}
+                                total={second.allocatedDays + (second.carriedForwardDays || 0)}
+                                used={second.usedDays}
+                                pending={second.pendingDays || 0}
+                                remaining={second.remainingDays}
+                                accentColor={second.color || colors.primary}
+                                isPaid={second.isPaid}
+                              />
+                            ) : (
+                              <View style={{ flex: 1, minWidth: 155 }} />
+                            )}
+                          </View>
+                        );
+                      })}
+
+                      {/* Quota-Free Entitlements Badge Row */}
+                      {quotaFreeBalances.length > 0 && quotaBalances.length > 0 && (
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
+                          {quotaFreeBalances.map((qf) => (
+                            <View
+                              key={`qf_${qf.leaveTypeId}`}
+                              style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                gap: 6,
+                                paddingVertical: 5,
+                                paddingHorizontal: 10,
+                                borderRadius: borderRadius.sm,
+                                backgroundColor: (qf.color || colors.primary) + '14',
+                                borderWidth: 1,
+                                borderColor: (qf.color || colors.primary) + '30',
+                              }}
+                            >
+                              <View
+                                style={{
+                                  width: 6,
+                                  height: 6,
+                                  borderRadius: 3,
+                                  backgroundColor: qf.color || colors.primary,
+                                }}
+                              />
+                              <Text style={[typography.caption, { color: colors.textPrimary, fontWeight: '600' }]}>
+                                {qf.leaveTypeName}
+                              </Text>
+                              <Text style={[typography.caption, { color: colors.textTertiary, fontSize: 11 }]}>
+                                • Quota-Free
+                              </Text>
+                            </View>
+                          ))}
+                        </View>
+                      )}
+                    </>
+                  );
+                })()}
               </View>
             ) : (
-              /* Fallback 2x2 Leave Balance Grid */
+              /* Fallback 2x2 Leave Balance Grid (Using Real Org Policy: Casual 21, Medical 24) */
               <View style={styles.balanceGrid}>
                 <View style={styles.gridRow}>
                   <LeaveBalanceRingCard
-                    type="annual"
-                    title="Annual"
-                    total={balances?.annual.total || 20}
-                    used={balances?.annual.used || 0}
-                    pending={balances?.annual.pending || 0}
-                    accentColor={palette.leaveTypes.annual.color}
+                    type="casual"
+                    title="Casual Leave"
+                    code="CAS"
+                    total={balances?.casual.total || 21}
+                    used={balances?.casual.used || 0}
+                    pending={balances?.casual.pending || 0}
+                    accentColor={palette.leaveTypes.casual.color}
                   />
                   <LeaveBalanceRingCard
                     type="sick"
-                    title="Sick"
-                    total={balances?.sick.total || 10}
+                    title="Medical / Sick"
+                    code="MED"
+                    total={balances?.sick.total || 24}
                     used={balances?.sick.used || 0}
                     pending={balances?.sick.pending || 0}
                     accentColor={palette.leaveTypes.sick.color}
@@ -297,16 +359,18 @@ export const DashboardScreen: React.FC<{ navigation: any }> = ({ navigation }) =
 
                 <View style={styles.gridRow}>
                   <LeaveBalanceRingCard
-                    type="casual"
-                    title="Casual"
-                    total={balances?.casual.total || 5}
-                    used={balances?.casual.used || 0}
-                    pending={balances?.casual.pending || 0}
-                    accentColor={palette.leaveTypes.casual.color}
+                    type="duty"
+                    title="Duty Leave"
+                    code="DL"
+                    total={0}
+                    used={0}
+                    pending={0}
+                    accentColor={palette.leaveTypes.duty.color}
                   />
                   <LeaveBalanceRingCard
                     type="unpaid"
                     title="Unpaid"
+                    code="UNPAID"
                     total={balances?.unpaid.used || 0}
                     used={balances?.unpaid.used || 0}
                     pending={0}
@@ -646,14 +710,15 @@ export const DashboardScreen: React.FC<{ navigation: any }> = ({ navigation }) =
                 recentPunches && recentPunches.length > 0 ? (
                   <View style={{ gap: 8 }}>
                     {recentPunches.slice(0, 6).map((punch) => {
+                      const stateName = String(punch.punchStateName || '').toLowerCase();
                       const isCheckIn =
                         punch.isFirstPunch ||
-                        punch.punchStateName.toLowerCase().includes('first') ||
-                        punch.punchStateName.toLowerCase().includes('in');
+                        stateName.includes('first') ||
+                        stateName.includes('in');
                       const isCheckOut =
                         punch.isLastPunch ||
-                        punch.punchStateName.toLowerCase().includes('last') ||
-                        punch.punchStateName.toLowerCase().includes('out');
+                        stateName.includes('last') ||
+                        stateName.includes('out');
 
                       const badgeBg = isCheckIn ? colors.successBg : isCheckOut ? colors.warningBg : colors.surfaceSubtle;
                       const badgeColor = isCheckIn ? colors.success : isCheckOut ? colors.warning : colors.textSecondary;
@@ -792,11 +857,11 @@ export const DashboardScreen: React.FC<{ navigation: any }> = ({ navigation }) =
               {upcomingApprovedLeave ? (
                 <View style={styles.upcomingDetails}>
                   <Text style={[typography.h3, { color: colors.primary }]}>
-                    {formatDate(upcomingApprovedLeave.startDate)}
+                    {formatDate(upcomingApprovedLeave.startDate || (upcomingApprovedLeave as any).start_date || '')}
                   </Text>
                   <Text style={[typography.body2, { color: colors.textSecondary }]}>
-                    {upcomingApprovedLeave.totalDays} day(s) approved for{' '}
-                    {upcomingApprovedLeave.leaveType.toUpperCase()} leave
+                    {upcomingApprovedLeave.totalDays ?? (upcomingApprovedLeave as any).daysRequested ?? (upcomingApprovedLeave as any).days_requested ?? (upcomingApprovedLeave as any).days ?? 1} day(s) approved for{' '}
+                    {String(upcomingApprovedLeave.leaveTypeName || upcomingApprovedLeave.leaveType || (upcomingApprovedLeave as any).leave_type || 'General').toUpperCase()} leave
                   </Text>
                 </View>
               ) : (

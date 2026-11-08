@@ -50,7 +50,7 @@ export const ManagerApprovalsScreen: React.FC<{ route?: any; navigation?: any }>
 
   useEffect(() => {
     if (!user) return;
-    const unsub = leaveService.subscribeToManagerQueue(user.uid, setQueue);
+    const unsub = leaveService.subscribeToManagerQueue(user.uid, setQueue, user.orgId);
     return () => unsub();
   }, [user]);
 
@@ -96,63 +96,53 @@ export const ManagerApprovalsScreen: React.FC<{ route?: any; navigation?: any }>
 
   const conflictCount = queue.filter((r) => r.hasConflict).length;
 
-  return (
-    <View
-      style={[
-        styles.container,
-        {
-          backgroundColor: colors.background,
-          paddingTop: Math.max(insets.top, 16) + 12,
-        },
-      ]}
-    >
-      {/* Header */}
-      <View style={styles.header}>
-        <View style={styles.titleRow}>
-          <Text style={[typography.h1, { color: colors.textPrimary }]}>
-            {activeTab === 'approvals' ? 'Approval Queue' : 'Mobile App Users'}
-          </Text>
-          <View
+  const renderCommonHeader = (tab: 'approvals' | 'users') => (
+    <View style={styles.headerBlock}>
+      {/* Title & Badge */}
+      <View style={styles.titleRow}>
+        <Text style={[typography.h1, { color: colors.textPrimary }]}>
+          {tab === 'approvals' ? 'Approval Queue' : 'Mobile App Users'}
+        </Text>
+        <View
+          style={[
+            styles.queueCountBadge,
+            {
+              backgroundColor:
+                tab === 'approvals'
+                  ? queue.length > 0
+                    ? colors.primary
+                    : colors.surfaceSubtle
+                  : colors.primaryLight,
+              borderRadius: borderRadius.full,
+            },
+          ]}
+        >
+          <Text
             style={[
-              styles.queueCountBadge,
+              typography.caption,
               {
-                backgroundColor:
-                  activeTab === 'approvals'
+                color:
+                  tab === 'approvals'
                     ? queue.length > 0
-                      ? colors.primary
-                      : colors.surfaceSubtle
-                    : colors.primaryLight,
-                borderRadius: borderRadius.full,
+                      ? '#FFFFFF'
+                      : colors.textSecondary
+                    : '#FFFFFF',
+                fontWeight: '700',
               },
             ]}
           >
-            <Text
-              style={[
-                typography.caption,
-                {
-                  color:
-                    activeTab === 'approvals'
-                      ? queue.length > 0
-                        ? '#FFFFFF'
-                        : colors.textSecondary
-                      : '#FFFFFF',
-                  fontWeight: '700',
-                },
-              ]}
-            >
-              {activeTab === 'approvals'
-                ? `${queue.length} Pending`
-                : `${mobileAppUsers.length} Registered`}
-            </Text>
-          </View>
+            {tab === 'approvals'
+              ? `${queue.length} Pending`
+              : `${mobileAppUsers.length} Staff (${mobileAppUsers.filter((u) => u.isMobileEnabled).length} Active)`}
+          </Text>
         </View>
-
-        <Text style={[typography.body1, { color: colors.textSecondary, marginTop: 2 }]}>
-          {activeTab === 'approvals'
-            ? 'Review and approve requests with real-time balance deductions'
-            : `Manage user permissions, roles & biometric links for ${currentOrgName || 'Organization'}`}
-        </Text>
       </View>
+
+      <Text style={[typography.body1, { color: colors.textSecondary, marginTop: 2, marginBottom: 12 }]}>
+        {tab === 'approvals'
+          ? 'Review and approve requests with real-time balance deductions'
+          : `Manage mobile app login access, security PINs & roles for all staff in ${currentOrgName || 'Organization'}`}
+      </Text>
 
       {/* Segmented Switch: Approvals vs Mobile Users */}
       <View
@@ -172,7 +162,7 @@ export const ManagerApprovalsScreen: React.FC<{ route?: any; navigation?: any }>
           }}
           style={[
             styles.tabSwitchBtn,
-            activeTab === 'approvals' && [
+            tab === 'approvals' && [
               styles.tabSwitchBtnActive,
               { backgroundColor: colors.card, ...elevation.sm },
             ],
@@ -181,14 +171,14 @@ export const ManagerApprovalsScreen: React.FC<{ route?: any; navigation?: any }>
         >
           <ShieldCheck
             size={16}
-            color={activeTab === 'approvals' ? colors.primary : colors.textSecondary}
+            color={tab === 'approvals' ? colors.primary : colors.textSecondary}
           />
           <Text
             style={[
               typography.subtitle2,
               {
-                color: activeTab === 'approvals' ? colors.textPrimary : colors.textSecondary,
-                fontWeight: activeTab === 'approvals' ? '700' : '600',
+                color: tab === 'approvals' ? colors.textPrimary : colors.textSecondary,
+                fontWeight: tab === 'approvals' ? '700' : '600',
                 fontSize: 13,
               },
             ]}
@@ -204,7 +194,7 @@ export const ManagerApprovalsScreen: React.FC<{ route?: any; navigation?: any }>
           }}
           style={[
             styles.tabSwitchBtn,
-            activeTab === 'users' && [
+            tab === 'users' && [
               styles.tabSwitchBtnActive,
               { backgroundColor: colors.card, ...elevation.sm },
             ],
@@ -213,30 +203,59 @@ export const ManagerApprovalsScreen: React.FC<{ route?: any; navigation?: any }>
         >
           <Users
             size={16}
-            color={activeTab === 'users' ? colors.primary : colors.textSecondary}
+            color={tab === 'users' ? colors.primary : colors.textSecondary}
           />
           <Text
             style={[
               typography.subtitle2,
               {
-                color: activeTab === 'users' ? colors.textPrimary : colors.textSecondary,
-                fontWeight: activeTab === 'users' ? '700' : '600',
+                color: tab === 'users' ? colors.textPrimary : colors.textSecondary,
+                fontWeight: tab === 'users' ? '700' : '600',
                 fontSize: 13,
               },
             ]}
           >
-            Mobile Users {mobileAppUsers.length > 0 ? `(${mobileAppUsers.length})` : ''}
+            Staff & Mobile Users {mobileAppUsers.length > 0 ? `(${mobileAppUsers.length})` : ''}
           </Text>
         </Pressable>
       </View>
+    </View>
+  );
 
+  return (
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Active Tab View */}
       {activeTab === 'users' ? (
-        <View style={{ flex: 1, paddingBottom: insets.bottom + 65 }}>
-          <MobileUsersManagement />
+        <View style={{ flex: 1 }}>
+          <MobileUsersManagement
+            headerPrefix={renderCommonHeader('users')}
+            contentContainerStyle={{
+              paddingTop: Math.max(insets.top, 16) + 12,
+              paddingBottom: insets.bottom + 90,
+              paddingHorizontal: 20,
+            }}
+          />
         </View>
       ) : (
-        <>
+        <ScrollView
+          contentContainerStyle={[
+            styles.scrollContent,
+            {
+              paddingTop: Math.max(insets.top, 16) + 12,
+              paddingBottom: insets.bottom + 90,
+              paddingHorizontal: 20,
+            },
+          ]}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={colors.primary}
+            />
+          }
+        >
+          {renderCommonHeader('approvals')}
+
           {/* Conflict Warning Strip if overlapping leaves exist */}
           {conflictCount > 0 && (
             <View
@@ -257,49 +276,38 @@ export const ManagerApprovalsScreen: React.FC<{ route?: any; navigation?: any }>
           )}
 
           {/* Pending Queue List */}
-          <ScrollView
-            contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 100 }]}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={onRefresh}
-                tintColor={colors.primary}
-              />
-            }
-          >
-            {queue.map((req, idx) => (
-              <LeaveRequestCard
-                key={req.id}
-                request={req}
-                index={idx}
-                isManagerView
-                onApprove={(id) => handleTriggerReview(id, 'approved')}
-                onReject={(id) => handleTriggerReview(id, 'rejected')}
-              />
-            ))}
+          {queue.map((req, idx) => (
+            <LeaveRequestCard
+              key={req.id}
+              request={req}
+              index={idx}
+              isManagerView
+              onApprove={(id) => handleTriggerReview(id, 'approved')}
+              onReject={(id) => handleTriggerReview(id, 'rejected')}
+            />
+          ))}
 
-            {queue.length === 0 && (
-              <View
-                style={[
-                  styles.allClearBox,
-                  {
-                    backgroundColor: colors.card,
-                    borderColor: colors.border,
-                    borderRadius: borderRadius.lg,
-                  },
-                ]}
-              >
-                <CheckCircle2 size={44} color={colors.success} />
-                <Text style={[typography.h3, { color: colors.textPrimary, marginTop: 8 }]}>
-                  All Caught Up!
-                </Text>
-                <Text style={[typography.body2, { color: colors.textSecondary, textAlign: 'center' }]}>
-                  There are no pending leave requests awaiting your approval right now.
-                </Text>
-              </View>
-            )}
-          </ScrollView>
-        </>
+          {queue.length === 0 && (
+            <View
+              style={[
+                styles.allClearBox,
+                {
+                  backgroundColor: colors.card,
+                  borderColor: colors.border,
+                  borderRadius: borderRadius.lg,
+                },
+              ]}
+            >
+              <CheckCircle2 size={44} color={colors.success} />
+              <Text style={[typography.h3, { color: colors.textPrimary, marginTop: 8 }]}>
+                All Caught Up!
+              </Text>
+              <Text style={[typography.body2, { color: colors.textSecondary, textAlign: 'center' }]}>
+                There are no pending leave requests awaiting your approval right now.
+              </Text>
+            </View>
+          )}
+        </ScrollView>
       )}
 
       {/* Modal Review */}
@@ -317,10 +325,9 @@ export const ManagerApprovalsScreen: React.FC<{ route?: any; navigation?: any }>
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingHorizontal: 20,
   },
-  header: {
-    marginBottom: 12,
+  headerBlock: {
+    marginBottom: 4,
   },
   titleRow: {
     flexDirection: 'row',
@@ -335,7 +342,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     padding: 3,
     borderWidth: 1,
-    marginBottom: 14,
+    marginBottom: 10,
     gap: 4,
   },
   tabSwitchBtn: {

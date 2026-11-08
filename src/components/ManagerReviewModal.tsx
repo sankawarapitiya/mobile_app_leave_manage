@@ -107,7 +107,7 @@ export const ManagerReviewModal: React.FC<ManagerReviewModalProps> = ({
               {formatDateRange(request.startDate, request.endDate, request.isHalfDay, request.halfDayPeriod)}
             </Text>
             <Text style={[typography.body2, { color: colors.textSecondary, marginTop: 2 }]}>
-              {request.totalDays} {request.totalDays === 1 ? 'day' : 'days'} ({request.leaveType.toUpperCase()} LEAVE)
+              {request.totalDays ?? (request as any).daysRequested ?? 1} {(request.totalDays ?? (request as any).daysRequested ?? 1) === 1 ? 'day' : 'days'} ({String(request.leaveTypeName || request.leaveType || 'General').toUpperCase()} LEAVE)
             </Text>
           </View>
 

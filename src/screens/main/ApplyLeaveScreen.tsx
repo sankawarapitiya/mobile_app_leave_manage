@@ -40,11 +40,11 @@ import {
 import { triggerHaptic } from '../../utils/haptics';
 import { palette } from '../../theme/colors';
 
-const FALLBACK_LEAVE_TYPES: { type: LeaveType; id: string; code: string; label: string; desc: string; color: string; remainingDays: number; allocatedDays: number; isPaid: boolean }[] = [
-  { type: 'annual', id: 'annual', code: 'VAC', label: 'Annual Leave', desc: 'Paid vacation & rest', color: palette.leaveTypes.annual.color, remainingDays: 20, allocatedDays: 20, isPaid: true },
-  { type: 'casual', id: 'casual', code: 'CAS', label: 'Casual Leave', desc: 'Personal errands', color: palette.leaveTypes.casual.color, remainingDays: 5, allocatedDays: 5, isPaid: true },
-  { type: 'sick', id: 'sick', code: 'MED', label: 'Sick / Medical Leave', desc: 'Health & recovery', color: palette.leaveTypes.sick.color, remainingDays: 10, allocatedDays: 10, isPaid: true },
-  { type: 'unpaid', id: 'unpaid', code: 'UNPAID', label: 'Unpaid Leave', desc: 'Extended absence', color: palette.leaveTypes.unpaid.color, remainingDays: 999, allocatedDays: 0, isPaid: false },
+const FALLBACK_LEAVE_TYPES: { type: LeaveType; id: string; code: string; label: string; desc: string; color: string; remainingDays: number; allocatedDays: number; isPaid: boolean; pendingDays?: number }[] = [
+  { type: 'casual', id: 'casual', code: 'CAS', label: 'Casual Leave', desc: 'Personal errands', color: palette.leaveTypes.casual.color, remainingDays: 21, allocatedDays: 21, isPaid: true, pendingDays: 0 },
+  { type: 'sick', id: 'sick', code: 'MED', label: 'Sick / Medical Leave', desc: 'Health & recovery', color: palette.leaveTypes.sick.color, remainingDays: 24, allocatedDays: 24, isPaid: true, pendingDays: 0 },
+  { type: 'duty', id: 'duty', code: 'DL', label: 'Duty Leave', desc: 'Official duties & exams', color: palette.leaveTypes.duty.color, remainingDays: 999, allocatedDays: 0, isPaid: true, pendingDays: 0 },
+  { type: 'unpaid', id: 'unpaid', code: 'UNPAID', label: 'Unpaid Leave', desc: 'Extended absence', color: palette.leaveTypes.unpaid.color, remainingDays: 999, allocatedDays: 0, isPaid: false, pendingDays: 0 },
 ];
 
 export const ApplyLeaveScreen: React.FC<{ navigation: any }> = ({ navigation }) => {
@@ -102,6 +102,7 @@ export const ApplyLeaveScreen: React.FC<{ navigation: any }> = ({ navigation }) 
         remainingDays: b.remainingDays,
         allocatedDays: b.allocatedDays,
         isPaid: b.isPaid,
+        pendingDays: b.pendingDays || 0,
       }));
     }
 
@@ -138,7 +139,8 @@ export const ApplyLeaveScreen: React.FC<{ navigation: any }> = ({ navigation }) 
     if (selectedTypeItem.allocatedDays === 0 && selectedTypeItem.remainingDays === 0) {
       return 999;
     }
-    return Math.max(0, selectedTypeItem.remainingDays);
+    const pending = (selectedTypeItem as any).pendingDays || 0;
+    return Math.max(0, selectedTypeItem.remainingDays - pending);
   }, [selectedTypeItem]);
 
   const hasExceededBalance =

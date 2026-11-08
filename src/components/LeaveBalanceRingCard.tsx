@@ -35,7 +35,8 @@ export const LeaveBalanceRingCard: React.FC<LeaveBalanceRingCardProps> = ({
 }) => {
   const { colors, typography, borderRadius, elevation, isDark } = useTheme();
 
-  const available = remaining !== undefined ? remaining : Math.max(0, total - used - pending);
+  const baseRemaining = remaining !== undefined ? remaining : Math.max(0, total - used);
+  const available = Math.max(0, baseRemaining - pending);
   const ratio = total > 0 ? Math.min(1, Math.max(0, available / total)) : (used > 0 ? 1 : 0);
 
   // SVG circular dimensions

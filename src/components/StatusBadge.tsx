@@ -15,32 +15,37 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ status, size = 'md' })
   const config = {
     pending: {
       label: 'Pending',
-      bg: colors.warningBg,
-      color: colors.warning,
+      bg: colors.statusPendingBg,
+      color: colors.statusPendingText,
+      border: colors.statusPendingBorder,
       Icon: Clock,
     },
     approved: {
       label: 'Approved',
-      bg: colors.successBg,
-      color: colors.success,
+      bg: colors.statusApprovedBg,
+      color: colors.statusApprovedText,
+      border: colors.statusApprovedBorder,
       Icon: CheckCircle2,
     },
     rejected: {
       label: 'Rejected',
-      bg: colors.dangerBg,
-      color: colors.danger,
+      bg: colors.statusRejectedBg,
+      color: colors.statusRejectedText,
+      border: colors.statusRejectedBorder,
       Icon: XCircle,
     },
     cancelled: {
       label: 'Cancelled',
-      bg: colors.isDark ? 'rgba(148, 163, 184, 0.15)' : 'rgba(100, 116, 139, 0.12)',
-      color: colors.textSecondary,
+      bg: colors.statusDraftBg,
+      color: colors.statusDraftText,
+      border: colors.statusDraftBorder,
       Icon: Ban,
     },
   }[status] || {
     label: status,
     bg: colors.surfaceSubtle,
     color: colors.textSecondary,
+    border: colors.borderSubtle,
     Icon: Clock,
   };
 
@@ -53,6 +58,8 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ status, size = 'md' })
         styles.badge,
         {
           backgroundColor: config.bg,
+          borderColor: config.border,
+          borderWidth: 1,
           borderRadius: borderRadius.full,
           paddingVertical: isSmall ? 3 : 5,
           paddingHorizontal: isSmall ? 8 : 10,

@@ -42,7 +42,7 @@ export const CustomButton: React.FC<CustomButtonProps> = ({
   style,
   textStyle,
 }) => {
-  const { colors, typography, borderRadius } = useTheme();
+  const { colors, typography, borderRadius, isDark } = useTheme();
   const scale = useSharedValue(1);
 
   const animatedStyle = useAnimatedStyle(() => {
@@ -79,10 +79,11 @@ export const CustomButton: React.FC<CustomButtonProps> = ({
 
   const getTextColor = () => {
     if (disabled) return colors.textTertiary;
-    if (isPrimary || isDanger) return '#FFFFFF';
-    if (isOutline || isGhost) return colors.primary;
+    if (isPrimary) return colors.textInverse;
+    if (isDanger) return '#FFFFFF';
+    if (isOutline || isGhost) return colors.brandPrimary;
     if (isSecondary) return colors.textPrimary;
-    return '#FFFFFF';
+    return colors.textInverse;
   };
 
   const buttonContent = (
@@ -116,7 +117,11 @@ export const CustomButton: React.FC<CustomButtonProps> = ({
         style={[animatedStyle, style]}
       >
         <LinearGradient
-          colors={['#4F46E5', '#6366F1']}
+          colors={
+            isDark
+              ? [colors.brandPrimaryDark, colors.brandPrimary]
+              : [colors.brandPrimary, colors.brandPrimaryLight]
+          }
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={[

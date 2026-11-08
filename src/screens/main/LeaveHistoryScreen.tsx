@@ -37,7 +37,12 @@ export const LeaveHistoryScreen: React.FC = () => {
 
   useEffect(() => {
     if (!user) return;
-    const unsub = leaveService.subscribeToUserRequests(user.uid, setRequests);
+    const unsub = leaveService.subscribeToUserRequests(
+      user.uid,
+      setRequests,
+      user.orgId,
+      user.rawUserId || user.fingerprintId
+    );
     return () => unsub();
   }, [user]);
 

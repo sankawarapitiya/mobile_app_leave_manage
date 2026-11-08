@@ -15,6 +15,7 @@ import { db, isFirebaseConfigured } from './config';
 import { DEFAULT_ORG_ID } from './authService';
 import {
   LeaveRequest,
+  LeaveRequestStatus,
   UserLeaveBalances,
   EmployeeLeaveBalanceItem,
   CloudLeaveType,
@@ -110,19 +111,21 @@ export function normalizeCloudLeaveBalances(data: any, fallbackUserId: string): 
 
   const casualTotal = casualItem
     ? casualItem.allocatedDays + (casualItem.carriedForwardDays || 0)
-    : data.casual?.total ?? 5;
+    : data.casual?.total ?? 21;
   const casualUsed = casualItem ? casualItem.usedDays : data.casual?.used ?? 0;
   const casualPending = casualItem ? (casualItem.pendingDays || 0) : data.casual?.pending ?? 0;
 
   const sickTotal = sickItem
     ? sickItem.allocatedDays + (sickItem.carriedForwardDays || 0)
-    : data.sick?.total ?? 10;
+    : data.sick?.total ?? 24;
   const sickUsed = sickItem ? sickItem.usedDays : data.sick?.used ?? 0;
   const sickPending = sickItem ? (sickItem.pendingDays || 0) : data.sick?.pending ?? 0;
 
   const annualTotal = annualItem
     ? annualItem.allocatedDays + (annualItem.carriedForwardDays || 0)
-    : data.annual?.total ?? 20;
+    : balancesArray.length > 0
+    ? 0
+    : data.annual?.total ?? 0;
   const annualUsed = annualItem ? annualItem.usedDays : data.annual?.used ?? 0;
   const annualPending = annualItem ? (annualItem.pendingDays || 0) : data.annual?.pending ?? 0;
 
@@ -165,6 +168,109 @@ export function normalizeCloudLeaveBalances(data: any, fallbackUserId: string): 
   };
 }
 
+/**
+ * Normalizes cloud leave request document to guarantee all required fields exist
+ */
+export function normalizeLeaveRequest(data: any, fallbackId?: string): LeaveRequest {
+  if (!data) {
+    return {
+      id: fallbackId || String(Date.now()),
+      userId: '',
+      userName: 'Employee',
+      department: 'General',
+      leaveType: 'casual',
+      leaveTypeName: 'Casual Leave',
+      startDate: new Date().toISOString().slice(0, 10),
+      endDate: new Date().toISOString().slice(0, 10),
+      totalDays: 1,
+      isHalfDay: false,
+      status: 'pending',
+      reason: '',
+      appliedOn: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  const rawId = String(
+    data.rawUserId ||
+    data.fingerprintId ||
+    data.fingerprint_id ||
+    data.user_id ||
+    data.userId ||
+    ''
+  ).replace(/^emp_/, '').trim();
+
+  const rawStatus = String(data.status || data.status_upper || 'pending').toLowerCase();
+  const validStatus: LeaveRequestStatus = (['approved', 'rejected', 'cancelled', 'pending'].includes(rawStatus)
+    ? rawStatus
+    : 'pending') as LeaveRequestStatus;
+
+  const rawTypeName = String(data.leaveTypeName || data.leave_type_name || data.leaveType || data.leave_type || '').trim();
+  const rawTypeCode = String(data.leaveTypeCode || data.leave_type_code || data.code || '').trim().toUpperCase();
+
+  let resolvedLeaveType = 'casual';
+  if (rawTypeName) {
+    const lower = rawTypeName.toLowerCase();
+    if (lower.includes('annual')) resolvedLeaveType = 'annual';
+    else if (lower.includes('sick') || lower.includes('med')) resolvedLeaveType = 'sick';
+    else if (lower.includes('cas')) resolvedLeaveType = 'casual';
+    else if (lower.includes('unpaid') || lower.includes('nopay')) resolvedLeaveType = 'unpaid';
+    else resolvedLeaveType = rawTypeName.toLowerCase().replace(/\s+/g, '_');
+  } else if (rawTypeCode) {
+    if (rawTypeCode === 'ANN' || rawTypeCode === 'AL') resolvedLeaveType = 'annual';
+    else if (rawTypeCode === 'MED' || rawTypeCode === 'SL') resolvedLeaveType = 'sick';
+    else if (rawTypeCode === 'CAS' || rawTypeCode === 'CL') resolvedLeaveType = 'casual';
+    else if (rawTypeCode === 'NOPAY' || rawTypeCode === 'UL') resolvedLeaveType = 'unpaid';
+    else resolvedLeaveType = rawTypeCode.toLowerCase();
+  }
+
+  const startDate = String(data.startDate || data.start_date || new Date().toISOString().slice(0, 10));
+  const endDate = String(data.endDate || data.end_date || startDate);
+  const totalDays = Number(data.totalDays ?? data.daysRequested ?? data.days_requested ?? data.days ?? 1) || 1;
+  const numIdMatch = String(data.numericId || data.requestId || fallbackId || data.id || '').match(/\d+/);
+  const numericId = numIdMatch ? parseInt(numIdMatch[0], 10) : undefined;
+  const finalId = String(data.id || fallbackId || (numericId ? `req_${numericId}` : `req_${Date.now()}`));
+
+  const displayName = data.employeeName || data.userName || (rawId ? `Employee #${rawId}` : 'Employee');
+  const displayTypeName = rawTypeName || (resolvedLeaveType ? resolvedLeaveType.charAt(0).toUpperCase() + resolvedLeaveType.slice(1) + ' Leave' : 'Leave');
+
+  return {
+    ...data,
+    id: finalId,
+    cloudDocId: finalId,
+    numericId,
+    requestId: numericId,
+    userId: String(data.userId || data.user_id || (rawId ? `emp_${rawId}` : 'emp_user')),
+    user_id: rawId || String(data.user_id || data.userId || ''),
+    rawUserId: rawId,
+    fingerprintId: rawId,
+    authUid: data.authUid || (data.userId && String(data.userId).startsWith('emp_') ? data.userId : undefined),
+    organizationId: data.organizationId || data.orgId || data.org_id || DEFAULT_ORG_ID,
+    org_id: data.org_id || data.orgId || data.organizationId || DEFAULT_ORG_ID,
+    userName: displayName,
+    employeeName: displayName,
+    department: data.department || data.employee_department || 'General',
+    leaveType: resolvedLeaveType,
+    leaveTypeName: displayTypeName,
+    leaveTypeCode: rawTypeCode,
+    startDate,
+    start_date: startDate,
+    endDate,
+    end_date: endDate,
+    totalDays,
+    daysRequested: totalDays,
+    days_requested: totalDays,
+    isHalfDay: Boolean(data.isHalfDay ?? data.is_half_day ?? false),
+    halfDayPeriod: data.halfDayPeriod || data.half_day_period,
+    status: validStatus,
+    status_upper: validStatus.toUpperCase(),
+    reason: data.reason || '',
+    appliedOn: data.appliedOn || data.createdAt || data.created_at || new Date().toISOString(),
+    createdAt: data.createdAt || data.created_at || data.appliedOn || new Date().toISOString(),
+    updatedAt: data.updatedAt || data.updated_at || new Date().toISOString(),
+  };
+}
+
 export const leaveService = {
   /**
    * Conflict Detection Helper:
@@ -201,13 +307,19 @@ export const leaveService = {
    */
   subscribeToUserRequests: (
     userId: string,
-    onData: (requests: LeaveRequest[]) => void
+    onData: (requests: LeaveRequest[]) => void,
+    orgId?: string,
+    rawUserId?: string
   ): Unsubscribe => {
+    const rawId = String(rawUserId || userId || '').replace(/^emp_/, '').trim();
+    const cleanAuthUid = String(userId || '').trim();
+    const targetOrg = (orgId || DEFAULT_ORG_ID).trim().toUpperCase();
+
     if (!isFirebaseConfigured || !db) {
       const emit = () => {
         const userReqs = localRequests
-          .filter((r) => r.userId === userId)
-          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          .filter((r) => r.userId === cleanAuthUid || r.userId === rawId || r.rawUserId === rawId)
+          .sort((a, b) => new Date(b.createdAt || b.startDate || '').getTime() - new Date(a.createdAt || a.startDate || '').getTime());
         onData(userReqs);
       };
       emit();
@@ -215,34 +327,105 @@ export const leaveService = {
       return () => listeners.delete(emit);
     }
 
-    try {
-      const q = query(
-        collection(db, 'leave_requests'),
-        where('userId', '==', userId),
-        orderBy('createdAt', 'desc')
-      );
+    const firestore = db;
+    let rootList: LeaveRequest[] = [];
+    let orgList: LeaveRequest[] = [];
 
-      return onSnapshot(
-        q,
+    const mergeAndEmit = () => {
+      const map = new Map<string, LeaveRequest>();
+      [...rootList, ...orgList].forEach((req) => {
+        const numId = req.requestId || req.numericId || (typeof req.id === 'string' && req.id.startsWith('req_') ? req.id.replace('req_', '') : req.id);
+        const key = String(numId || `${req.userId}_${req.startDate}_${req.leaveTypeId}`);
+        const existing = map.get(key);
+        if (!existing) {
+          map.set(key, req);
+        } else {
+          const existingStatus = String(existing.status || '').toLowerCase();
+          const incomingStatus = String(req.status || '').toLowerCase();
+          const existingPending = existingStatus === 'pending';
+          const incomingPending = incomingStatus === 'pending';
+
+          if (existingPending && !incomingPending) {
+            // Incoming is decisive (approved/rejected/cancelled) -> update!
+            map.set(key, req);
+          } else if (!existingPending && incomingPending) {
+            // Existing is decisive, ignore incoming stale pending
+          } else {
+            // Same status priority, pick newest timestamp
+            const existingTime = new Date(existing.updatedAt || existing.createdAt || 0).getTime();
+            const incomingTime = new Date(req.updatedAt || req.createdAt || 0).getTime();
+            if (incomingTime >= existingTime) {
+              map.set(key, req);
+            }
+          }
+        }
+      });
+      const merged = Array.from(map.values()).sort(
+        (a, b) => new Date(b.createdAt || b.startDate || '').getTime() - new Date(a.createdAt || a.startDate || '').getTime()
+      );
+      onData(merged);
+    };
+
+    let unsubRoot: Unsubscribe = () => {};
+    try {
+      unsubRoot = onSnapshot(
+        collection(firestore, 'leave_requests'),
         (snapshot) => {
-          const list: LeaveRequest[] = [];
+          rootList = [];
           snapshot.forEach((docSnap) => {
-            list.push({ id: docSnap.id, ...(docSnap.data() as any) });
+            const data = docSnap.data() as any;
+            const docUserId = String(data.userId || '').replace(/^emp_/, '').trim();
+            const docRawId = String(data.rawUserId || data.fingerprintId || data.fingerprint_id || data.user_id || '').trim();
+            const docAuthUid = String(data.authUid || data.userId || '').trim();
+            const matchesUser =
+              (rawId && (docRawId === rawId || docUserId === rawId)) ||
+              (cleanAuthUid && (docAuthUid === cleanAuthUid || docUserId === cleanAuthUid));
+            if (matchesUser) {
+              rootList.push(normalizeLeaveRequest(data, docSnap.id));
+            }
           });
-          onData(list);
+          mergeAndEmit();
         },
         (error) => {
-          console.warn('[Firestore] subscribeToUserRequests fallback:', error);
-          const userReqs = localRequests
-            .filter((r) => r.userId === userId)
-            .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-          onData(userReqs);
+          console.warn('[Firestore] subscribeToUserRequests root error:', error.message);
         }
       );
-    } catch {
-      onData(localRequests.filter((r) => r.userId === userId));
-      return () => {};
+    } catch (e) {
+      console.warn('[Firestore] subscribeToUserRequests root failed to attach:', e);
     }
+
+    let unsubOrg: Unsubscribe = () => {};
+    try {
+      unsubOrg = onSnapshot(
+        collection(firestore, 'organizations', targetOrg, 'leave_requests'),
+        (snapshot) => {
+          orgList = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data() as any;
+            const docUserId = String(data.userId || '').replace(/^emp_/, '').trim();
+            const docRawId = String(data.rawUserId || data.fingerprintId || data.fingerprint_id || data.user_id || '').trim();
+            const docAuthUid = String(data.authUid || data.userId || '').trim();
+            const matchesUser =
+              (rawId && (docRawId === rawId || docUserId === rawId)) ||
+              (cleanAuthUid && (docAuthUid === cleanAuthUid || docUserId === cleanAuthUid));
+            if (matchesUser) {
+              orgList.push(normalizeLeaveRequest(data, docSnap.id));
+            }
+          });
+          mergeAndEmit();
+        },
+        (error) => {
+          console.warn('[Firestore] subscribeToUserRequests org error:', error.message);
+        }
+      );
+    } catch (e) {
+      console.warn('[Firestore] subscribeToUserRequests org failed to attach:', e);
+    }
+
+    return () => {
+      unsubRoot();
+      unsubOrg();
+    };
   },
 
   /**
@@ -255,19 +438,84 @@ export const leaveService = {
     fingerprintId?: string
   ): Unsubscribe => {
     const primaryId = String(fingerprintId || '').trim();
-    const fallbackId = String(userId || '').trim().replace('emp_', '');
+    const fallbackId = String(userId || '').trim().replace(/^emp_/, '');
     const targetId = primaryId || fallbackId;
     const targetOrg = (orgId || DEFAULT_ORG_ID).trim().toUpperCase();
+
+    const candidateIds = Array.from(
+      new Set(
+        [
+          primaryId,
+          fallbackId,
+          String(userId || '').trim(),
+          String(userId || '').replace(/^usr_/, '').replace(/^emp_/, '').trim(),
+        ].filter(Boolean)
+      )
+    );
 
     const defaultBalance: UserLeaveBalances = {
       userId: targetId,
       rawUserId: targetId,
       year: new Date().getFullYear(),
-      annual: { total: 20, used: 0, pending: 0 },
-      sick: { total: 10, used: 0, pending: 0 },
-      casual: { total: 5, used: 0, pending: 0 },
+      annual: { total: 0, used: 0, pending: 0 },
+      sick: { total: 24, used: 0, pending: 0 },
+      casual: { total: 21, used: 0, pending: 0 },
       unpaid: { used: 0 },
       updatedAt: new Date().toISOString(),
+      balances: [
+        {
+          leaveTypeId: 1,
+          leaveTypeName: 'Casual Leave',
+          code: 'CAS',
+          allocatedDays: 21,
+          carriedForwardDays: 0,
+          usedDays: 0,
+          remainingDays: 21,
+          pendingDays: 0,
+          notes: 'Standard Quota',
+          color: '#10b981',
+          isPaid: true,
+        },
+        {
+          leaveTypeId: 3,
+          leaveTypeName: 'Medical / Sick Leave',
+          code: 'MED',
+          allocatedDays: 24,
+          carriedForwardDays: 0,
+          usedDays: 0,
+          remainingDays: 24,
+          pendingDays: 0,
+          notes: 'Standard Quota',
+          color: '#ef4444',
+          isPaid: true,
+        },
+        {
+          leaveTypeId: 18,
+          leaveTypeName: 'Duty Leave',
+          code: 'DL',
+          allocatedDays: 0,
+          carriedForwardDays: 0,
+          usedDays: 0,
+          remainingDays: 0,
+          pendingDays: 0,
+          notes: 'Official Duty • Quota-Free',
+          color: '#6366f1',
+          isPaid: true,
+        },
+        {
+          leaveTypeId: 20,
+          leaveTypeName: 'Comp-Off',
+          code: 'CO',
+          allocatedDays: 0,
+          carriedForwardDays: 0,
+          usedDays: 0,
+          remainingDays: 0,
+          pendingDays: 0,
+          notes: 'Compensatory • Quota-Free',
+          color: '#0284c7',
+          isPaid: true,
+        },
+      ],
     };
 
     const firestore = db;
@@ -282,52 +530,92 @@ export const leaveService = {
     }
 
     try {
-      // First try root leave_balances/{targetId}
-      const rootDocRef = doc(firestore, 'leave_balances', targetId);
-      const unsubRoot = onSnapshot(
-        rootDocRef,
-        (snapshot) => {
-          if (snapshot.exists()) {
-            const normalized = normalizeCloudLeaveBalances(snapshot.data(), targetId);
+      let hasEmittedData = false;
+      let lastEmittedUpdatedAt = 0;
+
+      const handleBalanceSnap = (snapshot: any) => {
+        if (snapshot.exists()) {
+          const data = snapshot.data();
+          const updatedTime = new Date(data.updatedAt || 0).getTime();
+          if (updatedTime >= lastEmittedUpdatedAt || !hasEmittedData) {
+            lastEmittedUpdatedAt = updatedTime;
+            hasEmittedData = true;
+            const normalized = normalizeCloudLeaveBalances(data, targetId);
             onData(normalized);
-          } else {
-            // Check organization partitioned collection: organizations/{orgId}/leave_balances/{targetId}
-            getDocs(query(collection(firestore, 'organizations', targetOrg, 'leave_balances'), where('rawUserId', '==', targetId), limit(1)))
-              .then((qSnap) => {
-                if (!qSnap.empty) {
-                  onData(normalizeCloudLeaveBalances(qSnap.docs[0].data(), targetId));
-                } else {
-                  onData(defaultBalance);
-                }
-              })
-              .catch(() => {
-                onData(defaultBalance);
-              });
-          }
-        },
-        (error) => {
-          console.warn('[Firestore] subscribeToUserBalances root fallback, trying org path:', error.message);
-          // Fallback to org partitioned path
-          try {
-            const orgDocRef = doc(firestore, 'organizations', targetOrg, 'leave_balances', targetId);
-            onSnapshot(
-              orgDocRef,
-              (orgSnap) => {
-                if (orgSnap.exists()) {
-                  onData(normalizeCloudLeaveBalances(orgSnap.data(), targetId));
-                } else {
-                  onData(localBalances[targetId] || defaultBalance);
-                }
-              },
-              () => onData(localBalances[targetId] || defaultBalance)
-            );
-          } catch {
-            onData(localBalances[targetId] || defaultBalance);
           }
         }
-      );
+      };
 
-      return unsubRoot;
+      const unsubList: Unsubscribe[] = [];
+      const listenedDocIds = new Set<string>();
+
+      candidateIds.forEach((id) => {
+        if (!id || listenedDocIds.has(id)) return;
+        listenedDocIds.add(id);
+
+        const orgDocRef = doc(firestore, 'organizations', targetOrg, 'leave_balances', id);
+        const uOrg = onSnapshot(
+          orgDocRef,
+          handleBalanceSnap,
+          (err) => console.warn(`[Firestore] org leave_balance listener notice (${id}):`, err.message)
+        );
+        unsubList.push(uOrg);
+
+        const rootDocRef = doc(firestore, 'leave_balances', id);
+        const uRoot = onSnapshot(
+          rootDocRef,
+          handleBalanceSnap,
+          (err) => console.warn(`[Firestore] root leave_balance listener notice (${id}):`, err.message)
+        );
+        unsubList.push(uRoot);
+      });
+
+      // Targeted query fallback if direct doc listeners don't find document within 500ms
+      const fallbackTimer = setTimeout(async () => {
+        if (hasEmittedData) return;
+        try {
+          const colRef = collection(firestore, 'organizations', targetOrg, 'leave_balances');
+          let foundDoc: any = null;
+
+          for (const cand of candidateIds) {
+            const q = query(colRef, where('rawUserId', '==', cand), limit(1));
+            const snap = await getDocs(q);
+            if (!snap.empty) {
+              foundDoc = snap.docs[0];
+              break;
+            }
+          }
+
+          if (!foundDoc) {
+            for (const cand of candidateIds) {
+              const q = query(colRef, where('userId', '==', cand), limit(1));
+              const snap = await getDocs(q);
+              if (!snap.empty) {
+                foundDoc = snap.docs[0];
+                break;
+              }
+            }
+          }
+
+          if (foundDoc && !hasEmittedData) {
+            hasEmittedData = true;
+            onData(normalizeCloudLeaveBalances(foundDoc.data(), targetId));
+          } else if (!hasEmittedData) {
+            hasEmittedData = true;
+            onData(defaultBalance);
+          }
+        } catch (e) {
+          if (!hasEmittedData) {
+            hasEmittedData = true;
+            onData(defaultBalance);
+          }
+        }
+      }, 500);
+
+      return () => {
+        clearTimeout(fallbackTimer);
+        unsubList.forEach((u) => u());
+      };
     } catch (err) {
       console.warn('[Firestore] subscribeToUserBalances failed:', err);
       onData(localBalances[targetId] || defaultBalance);
@@ -397,12 +685,15 @@ export const leaveService = {
    */
   subscribeToManagerQueue: (
     managerId: string,
-    onData: (requests: LeaveRequest[]) => void
+    onData: (requests: LeaveRequest[]) => void,
+    orgId?: string
   ): Unsubscribe => {
+    const targetOrg = (orgId || DEFAULT_ORG_ID).trim().toUpperCase();
+
     if (!isFirebaseConfigured || !db) {
       const emit = () => {
         const queue = localRequests
-          .filter((r) => r.status === 'pending')
+          .filter((r) => String(r.status || r.status_upper || '').toLowerCase() === 'pending')
           .map((r) => {
             const conflict = leaveService.checkTeamConflict(r, localRequests);
             return {
@@ -411,7 +702,7 @@ export const leaveService = {
               conflictingUsers: conflict.conflictingUsers,
             };
           })
-          .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
+          .sort((a, b) => new Date(a.startDate || '').getTime() - new Date(b.startDate || '').getTime());
         onData(queue);
       };
       emit();
@@ -419,32 +710,101 @@ export const leaveService = {
       return () => listeners.delete(emit);
     }
 
-    try {
-      const q = query(
-        collection(db, 'leave_requests'),
-        where('status', '==', 'pending'),
-        orderBy('startDate', 'asc')
-      );
+    const firestore = db;
+    let rootList: LeaveRequest[] = [];
+    let orgList: LeaveRequest[] = [];
 
-      return onSnapshot(
-        q,
+    const mergeAndEmit = () => {
+      const map = new Map<string, LeaveRequest>();
+      const allRequests = [...rootList, ...orgList];
+
+      allRequests.forEach((req) => {
+        const numId = req.requestId || req.numericId || (typeof req.id === 'string' && req.id.startsWith('req_') ? req.id.replace('req_', '') : req.id);
+        const key = String(numId || `${req.userId}_${req.startDate}_${req.leaveTypeId}`);
+        const existing = map.get(key);
+        if (!existing) {
+          map.set(key, req);
+        } else {
+          const existingStatus = String(existing.status || '').toLowerCase();
+          const incomingStatus = String(req.status || '').toLowerCase();
+          const existingPending = existingStatus === 'pending';
+          const incomingPending = incomingStatus === 'pending';
+
+          if (existingPending && !incomingPending) {
+            // Incoming is decisive (approved/rejected/cancelled) -> overwrite pending!
+            map.set(key, req);
+          } else if (!existingPending && incomingPending) {
+            // Existing is decisive, ignore incoming stale pending
+          } else {
+            const existingTime = new Date(existing.updatedAt || existing.createdAt || 0).getTime();
+            const incomingTime = new Date(req.updatedAt || req.createdAt || 0).getTime();
+            if (incomingTime >= existingTime) {
+              map.set(key, req);
+            }
+          }
+        }
+      });
+
+      // Only requests that are strictly pending belong in the manager approval queue
+      const queue = Array.from(map.values())
+        .filter((r) => String(r.status || '').toLowerCase() === 'pending')
+        .map((r) => {
+          const conflict = leaveService.checkTeamConflict(r, allRequests);
+          return {
+            ...r,
+            hasConflict: conflict.hasConflict,
+            conflictingUsers: conflict.conflictingUsers,
+          };
+        })
+        .sort((a, b) => new Date(a.startDate || '').getTime() - new Date(b.startDate || '').getTime());
+
+      onData(queue);
+    };
+
+    let unsubRoot: Unsubscribe = () => {};
+    try {
+      unsubRoot = onSnapshot(
+        collection(firestore, 'leave_requests'),
         (snapshot) => {
-          const list: LeaveRequest[] = [];
+          rootList = [];
           snapshot.forEach((docSnap) => {
-            list.push({ id: docSnap.id, ...(docSnap.data() as any) });
+            const data = docSnap.data() as any;
+            rootList.push(normalizeLeaveRequest(data, docSnap.id));
           });
-          onData(list);
+          mergeAndEmit();
         },
         (error) => {
-          console.warn('[Firestore] subscribeToManagerQueue fallback:', error);
-          const queue = localRequests.filter((r) => r.status === 'pending');
-          onData(queue);
+          console.warn('[Firestore] subscribeToManagerQueue root error:', error.message);
         }
       );
-    } catch {
-      onData(localRequests.filter((r) => r.status === 'pending'));
-      return () => {};
+    } catch (e) {
+      console.warn('[Firestore] subscribeToManagerQueue root failed to attach:', e);
     }
+
+    let unsubOrg: Unsubscribe = () => {};
+    try {
+      unsubOrg = onSnapshot(
+        collection(firestore, 'organizations', targetOrg, 'leave_requests'),
+        (snapshot) => {
+          orgList = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data() as any;
+            orgList.push(normalizeLeaveRequest(data, docSnap.id));
+          });
+          mergeAndEmit();
+        },
+        (error) => {
+          console.warn('[Firestore] subscribeToManagerQueue org error:', error.message);
+        }
+      );
+    } catch (e) {
+      console.warn('[Firestore] subscribeToManagerQueue org failed to attach:', e);
+    }
+
+    return () => {
+      unsubRoot();
+      unsubOrg();
+    };
   },
 
   /**
@@ -595,8 +955,8 @@ export const leaveService = {
           const list: LeaveRequest[] = [];
           snapshot.forEach((docSnap) => {
             const data = docSnap.data() as LeaveRequest;
-            if (data.status === 'approved' || data.status === 'pending') {
-              list.push({ ...data, id: docSnap.id });
+            if (data.status === 'approved' || data.status === 'pending' || (data as any).status_upper === 'APPROVED') {
+              list.push(normalizeLeaveRequest(data, docSnap.id));
             }
           });
           onData(list);
@@ -623,12 +983,49 @@ export const leaveService = {
   applyForLeave: async (
     reqData: Omit<LeaveRequest, 'id' | 'createdAt' | 'status'>
   ): Promise<string> => {
-    const newId = `req_${Date.now()}`;
+    const numericId = Math.floor(Date.now() / 1000);
+    const rawId = String(reqData.fingerprintId || reqData.rawUserId || reqData.userId || '').replace(/^emp_/, '').trim();
+    const targetOrg = (reqData.organizationId || DEFAULT_ORG_ID).trim().toUpperCase();
+    const newId = `req_${numericId}`;
+
     const newRequest: LeaveRequest = {
       ...reqData,
       id: newId,
+      requestId: numericId,
+      numericId: numericId,
+      userId: rawId,
+      user_id: rawId,
+      authUid: reqData.userId,
+      rawUserId: rawId,
+      fingerprintId: rawId,
+      userName: reqData.userName || 'Employee',
+      employeeName: reqData.userName || 'Employee',
+      department: reqData.department || 'General',
+      leaveType: reqData.leaveType || 'casual',
+      leaveTypeId: Number(reqData.leaveTypeId) || 1,
+      leave_type_id: Number(reqData.leaveTypeId) || 1,
+      leaveTypeCode: reqData.leaveTypeCode || 'CAS',
+      leave_type_code: reqData.leaveTypeCode || 'CAS',
+      leaveTypeName: reqData.leaveTypeName || 'Casual Leave',
+      leave_type_name: reqData.leaveTypeName || 'Casual Leave',
+      leaveColor: reqData.leaveColor || '#2563eb',
+      startDate: reqData.startDate,
+      start_date: reqData.startDate,
+      endDate: reqData.endDate || reqData.startDate,
+      end_date: reqData.endDate || reqData.startDate,
+      totalDays: reqData.totalDays,
+      daysRequested: reqData.totalDays,
+      days_requested: reqData.totalDays,
+      reason: reqData.reason || '',
+      isHalfDay: Boolean(reqData.isHalfDay),
+      dayType: reqData.isHalfDay ? 'HALF_DAY' : 'FULL_DAY',
+      day_type: reqData.isHalfDay ? 'HALF_DAY' : 'FULL_DAY',
       status: 'pending',
+      status_upper: 'PENDING',
+      organizationId: targetOrg,
+      org_id: targetOrg,
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
 
     // Calculate Conflict
@@ -640,8 +1037,8 @@ export const leaveService = {
     if (!isFirebaseConfigured || !firestore) {
       await new Promise((res) => setTimeout(res, 400));
       // Local balance check
-      const userBal = localBalances[reqData.userId] || {
-        userId: reqData.userId,
+      const userBal = localBalances[rawId] || localBalances[reqData.userId] || {
+        userId: rawId,
         year: 2026,
         annual: { total: 20, used: 0, pending: 0 },
         sick: { total: 10, used: 0, pending: 0 },
@@ -652,13 +1049,15 @@ export const leaveService = {
 
       if (reqData.leaveType !== 'unpaid') {
         const cat = userBal[reqData.leaveType];
-        const available = cat.total - cat.used - cat.pending;
-        if (reqData.totalDays > available) {
-          throw new Error(
-            `Insufficient ${reqData.leaveType} leave balance. Available: ${available} days, Requested: ${reqData.totalDays} days.`
-          );
+        if (cat) {
+          const available = cat.total - cat.used - cat.pending;
+          if (reqData.totalDays > available) {
+            throw new Error(
+              `Insufficient ${reqData.leaveType} leave balance. Available: ${available} days, Requested: ${reqData.totalDays} days.`
+            );
+          }
+          cat.pending += reqData.totalDays;
         }
-        cat.pending += reqData.totalDays;
       }
 
       localRequests.unshift(newRequest);
@@ -668,11 +1067,8 @@ export const leaveService = {
 
     try {
       await runTransaction(firestore, async (transaction) => {
-        const targetBalId = String(reqData.fingerprintId || reqData.rawUserId || reqData.userId).trim();
-        const targetOrg = (reqData.organizationId || DEFAULT_ORG_ID).trim().toUpperCase();
-
-        const rootBalRef = doc(firestore, 'leave_balances', targetBalId);
-        const orgBalRef = doc(firestore, 'organizations', targetOrg, 'leave_balances', targetBalId);
+        const rootBalRef = doc(firestore, 'leave_balances', rawId);
+        const orgBalRef = doc(firestore, 'organizations', targetOrg, 'leave_balances', rawId);
 
         let balanceSnap = await transaction.get(rootBalRef);
         let activeBalRef = rootBalRef;
@@ -690,7 +1086,7 @@ export const leaveService = {
               (b: any) =>
                 (reqData.leaveTypeId && String(b.leaveTypeId) === String(reqData.leaveTypeId)) ||
                 (reqData.leaveTypeCode && b.code === reqData.leaveTypeCode) ||
-                (reqData.leaveType && (b.code === reqData.leaveType.toUpperCase() || b.leaveTypeName.toLowerCase() === reqData.leaveType.toLowerCase()))
+                (reqData.leaveType && (b.code === reqData.leaveType.toUpperCase() || b.leaveTypeName?.toLowerCase() === reqData.leaveType.toLowerCase()))
             );
             if (item) {
               const totalDays = item.allocatedDays + (item.carriedForwardDays || 0);
@@ -722,10 +1118,21 @@ export const leaveService = {
           }
         }
 
-        const requestDocRef = doc(collection(firestore, 'leave_requests'));
-        const requestPayload = { ...newRequest };
-        requestPayload.id = requestDocRef.id;
-        transaction.set(requestDocRef, cleanFirestorePayload(requestPayload));
+        // Set in root leave_requests AND organizations/{orgId}/leave_requests using identical unified req_${numericId}
+        const unifiedDocId = `req_${numericId}`;
+        const requestDocRef = doc(firestore, 'leave_requests', unifiedDocId);
+        const orgDocRef = doc(firestore, 'organizations', targetOrg, 'leave_requests', unifiedDocId);
+
+        const unifiedPayload = {
+          ...newRequest,
+          id: unifiedDocId,
+          cloudDocId: unifiedDocId,
+          requestId: numericId,
+          numericId: numericId,
+        };
+
+        transaction.set(requestDocRef, cleanFirestorePayload(unifiedPayload));
+        transaction.set(orgDocRef, cleanFirestorePayload({ ...unifiedPayload, id: numericId }));
       });
 
       return newId;
@@ -757,18 +1164,32 @@ export const leaveService = {
     try {
       await runTransaction(firestore, async (transaction) => {
         const reqDocRef = doc(firestore, 'leave_requests', requestId);
-        const reqSnap = await transaction.get(reqDocRef);
+        let reqSnap = await transaction.get(reqDocRef);
+        let reqData: any = null;
+        let isRootDoc = true;
 
-        if (!reqSnap.exists()) throw new Error('Request not found');
-        const req = reqSnap.data() as LeaveRequest;
+        if (reqSnap.exists()) {
+          reqData = reqSnap.data();
+        } else {
+          const targetOrg = DEFAULT_ORG_ID.trim().toUpperCase();
+          const orgRef = doc(firestore, 'organizations', targetOrg, 'leave_requests', requestId);
+          const orgSnap = await transaction.get(orgRef);
+          if (orgSnap.exists()) {
+            reqData = orgSnap.data();
+            isRootDoc = false;
+          }
+        }
 
-        if (req.status !== 'pending') {
+        if (!reqData) throw new Error('Request not found');
+
+        const curStatus = String(reqData.status || reqData.status_upper || '').toLowerCase();
+        if (curStatus !== 'pending') {
           throw new Error('Only pending requests can be cancelled.');
         }
 
         // Restore pending balance
-        const targetBalId = String(req.fingerprintId || req.rawUserId || req.userId).trim();
-        const targetOrg = (req.organizationId || DEFAULT_ORG_ID).trim().toUpperCase();
+        const targetBalId = String(reqData.fingerprintId || reqData.rawUserId || reqData.userId || '').replace(/^emp_/, '').trim();
+        const targetOrg = (reqData.organizationId || DEFAULT_ORG_ID).trim().toUpperCase();
 
         const rootBalRef = doc(firestore, 'leave_balances', targetBalId);
         const orgBalRef = doc(firestore, 'organizations', targetOrg, 'leave_balances', targetBalId);
@@ -785,16 +1206,16 @@ export const leaveService = {
           if (Array.isArray(bal.balances)) {
             const item = bal.balances.find(
               (b: any) =>
-                (req.leaveTypeId && String(b.leaveTypeId) === String(req.leaveTypeId)) ||
-                (req.leaveTypeCode && b.code === req.leaveTypeCode) ||
-                (req.leaveType && (b.code === req.leaveType.toUpperCase() || b.leaveTypeName.toLowerCase() === req.leaveType.toLowerCase()))
+                (reqData.leaveTypeId && String(b.leaveTypeId) === String(reqData.leaveTypeId)) ||
+                (reqData.leaveTypeCode && b.code === reqData.leaveTypeCode) ||
+                (reqData.leaveType && (b.code === reqData.leaveType.toUpperCase() || b.leaveTypeName?.toLowerCase() === reqData.leaveType.toLowerCase()))
             );
             if (item) {
-              item.pendingDays = Math.max(0, (item.pendingDays || 0) - req.totalDays);
+              item.pendingDays = Math.max(0, (item.pendingDays || 0) - reqData.totalDays);
             }
           }
-          if (req.leaveType !== 'unpaid' && bal[req.leaveType]) {
-            bal[req.leaveType].pending = Math.max(0, (bal[req.leaveType].pending || 0) - req.totalDays);
+          if (reqData.leaveType !== 'unpaid' && bal[reqData.leaveType]) {
+            bal[reqData.leaveType].pending = Math.max(0, (bal[reqData.leaveType].pending || 0) - reqData.totalDays);
           }
           bal.updatedAt = new Date().toISOString();
           transaction.set(activeBalRef, cleanFirestorePayload(bal), { merge: true });
@@ -803,10 +1224,19 @@ export const leaveService = {
           }
         }
 
-        transaction.update(reqDocRef, cleanFirestorePayload({
+        const cancelUpdates = {
           status: 'cancelled',
+          status_upper: 'CANCELLED',
           reviewedAt: new Date().toISOString(),
-        }));
+          updatedAt: new Date().toISOString(),
+        };
+
+        const numId = reqData.requestId || reqData.numericId;
+        const cleanDocId = numId ? `req_${numId}` : requestId;
+        const rootReqRef = doc(firestore, 'leave_requests', cleanDocId);
+        const orgReqRef = doc(firestore, 'organizations', targetOrg, 'leave_requests', cleanDocId);
+        transaction.set(rootReqRef, cleanFirestorePayload(cancelUpdates), { merge: true });
+        transaction.set(orgReqRef, cleanFirestorePayload(cancelUpdates), { merge: true });
       });
     } catch (err: any) {
       throw new Error(err.message || 'Failed to cancel leave request');
@@ -860,16 +1290,28 @@ export const leaveService = {
     try {
       await runTransaction(firestore, async (transaction) => {
         const reqDocRef = doc(firestore, 'leave_requests', requestId);
-        const reqSnap = await transaction.get(reqDocRef);
+        let reqSnap = await transaction.get(reqDocRef);
+        let reqData: any = null;
 
-        if (!reqSnap.exists()) throw new Error('Leave request not found.');
-        const reqData = reqSnap.data() as LeaveRequest;
+        if (reqSnap.exists()) {
+          reqData = reqSnap.data();
+        } else {
+          const targetOrg = DEFAULT_ORG_ID.trim().toUpperCase();
+          const fallbackOrgDocRef = doc(firestore, 'organizations', targetOrg, 'leave_requests', requestId);
+          const fallbackSnap = await transaction.get(fallbackOrgDocRef);
+          if (fallbackSnap.exists()) {
+            reqData = fallbackSnap.data();
+          }
+        }
 
-        if (reqData.status !== 'pending') {
+        if (!reqData) throw new Error('Leave request not found.');
+
+        const curStatus = String(reqData.status || reqData.status_upper || '').toLowerCase();
+        if (curStatus !== 'pending') {
           throw new Error('This request has already been reviewed.');
         }
 
-        const targetBalId = String(reqData.fingerprintId || reqData.rawUserId || reqData.userId).trim();
+        const targetBalId = String(reqData.fingerprintId || reqData.rawUserId || reqData.userId || '').replace(/^emp_/, '').trim();
         const targetOrg = (reqData.organizationId || DEFAULT_ORG_ID).trim().toUpperCase();
 
         const rootBalRef = doc(firestore, 'leave_balances', targetBalId);
@@ -891,7 +1333,7 @@ export const leaveService = {
               (b: any) =>
                 (reqData.leaveTypeId && String(b.leaveTypeId) === String(reqData.leaveTypeId)) ||
                 (reqData.leaveTypeCode && b.code === reqData.leaveTypeCode) ||
-                (reqData.leaveType && (b.code === reqData.leaveType.toUpperCase() || b.leaveTypeName.toLowerCase() === reqData.leaveType.toLowerCase()))
+                (reqData.leaveType && (b.code === reqData.leaveType.toUpperCase() || b.leaveTypeName?.toLowerCase() === reqData.leaveType.toLowerCase()))
             );
             if (item) {
               item.pendingDays = Math.max(0, (item.pendingDays || 0) - reqData.totalDays);
@@ -922,13 +1364,28 @@ export const leaveService = {
           }
         }
 
-        transaction.update(reqDocRef, cleanFirestorePayload({
+        const reviewUpdates = {
           status: decision,
+          status_upper: decision.toUpperCase(),
           managerId: managerId || '',
           managerName: managerName || '',
+          actionBy: managerName || '',
+          action_by: managerName || '',
           managerComment: comment || '',
+          actionRemarks: comment || '',
+          action_remarks: comment || '',
+          actionAt: new Date().toISOString(),
+          action_at: new Date().toISOString(),
           reviewedAt: new Date().toISOString(),
-        }));
+          updatedAt: new Date().toISOString(),
+        };
+
+        const numId = reqData.requestId || reqData.numericId;
+        const cleanDocId = numId ? `req_${numId}` : requestId;
+        const rootReqRef = doc(firestore, 'leave_requests', cleanDocId);
+        const orgReqRef = doc(firestore, 'organizations', targetOrg, 'leave_requests', cleanDocId);
+        transaction.set(rootReqRef, cleanFirestorePayload(reviewUpdates), { merge: true });
+        transaction.set(orgReqRef, cleanFirestorePayload(reviewUpdates), { merge: true });
       });
     } catch (err: any) {
       console.error('[Firestore] reviewLeaveRequest error:', err);
