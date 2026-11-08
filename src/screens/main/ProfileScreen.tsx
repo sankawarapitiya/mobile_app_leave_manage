@@ -40,25 +40,16 @@ export const ProfileScreen: React.FC<{ navigation?: any }> = ({ navigation }) =>
   const {
     user,
     activeRole,
-    switchRole,
     logout,
     currentOrgId,
     currentOrgName,
-    availableOrganizations,
-    switchOrganization,
   } = useAuthStore();
   const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
 
-  const isUserAdmin =
+  const isManager =
     (user?.designation || '').toLowerCase().includes('admin') ||
     (user?.role || '').toLowerCase() === 'manager' ||
     (user?.designation || '').toLowerCase().includes('manager');
-
-  const handleRoleToggle = (role: 'employee' | 'manager') => {
-    if (isUserAdmin) return;
-    triggerHaptic.medium();
-    switchRole(role);
-  };
 
   const handleSignOut = () => {
     triggerHaptic.medium();
@@ -125,18 +116,18 @@ export const ProfileScreen: React.FC<{ navigation?: any }> = ({ navigation }) =>
               styles.currentRoleBadge,
               {
                 backgroundColor:
-                  activeRole === 'manager' ? colors.primaryLight : colors.secondary,
+                  isManager ? colors.primaryLight : colors.secondary,
                 borderRadius: borderRadius.full,
               },
             ]}
           >
-            {activeRole === 'manager' ? (
+            {isManager ? (
               <Shield size={13} color="#FFFFFF" />
             ) : (
               <User size={13} color="#FFFFFF" />
             )}
             <Text style={[typography.caption, { color: '#FFFFFF', fontWeight: '700' }]}>
-              ACTIVE ROLE: {String(activeRole || 'USER').toUpperCase()}
+              {isManager ? 'ROLE: SUPERVISOR / MANAGER' : 'ROLE: STAFF MEMBER'}
             </Text>
           </View>
         </View>
@@ -215,56 +206,14 @@ export const ProfileScreen: React.FC<{ navigation?: any }> = ({ navigation }) =>
               </Text>
             </View>
           </View>
-
-          {availableOrganizations.length > 1 && (
-            <View style={{ marginTop: 12, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 10 }}>
-              <Text style={[typography.caption, { color: colors.textSecondary, marginBottom: 6 }]}>
-                Switch Organization:
-              </Text>
-              <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
-                {availableOrganizations.map((org) => (
-                  <Pressable
-                    key={org.orgId}
-                    onPress={() => {
-                      triggerHaptic.selection();
-                      switchOrganization(org.orgId, org.organizationName);
-                    }}
-                    style={[
-                      styles.orgSwitchBtn,
-                      {
-                        backgroundColor:
-                          currentOrgId === org.orgId ? colors.primary : colors.surfaceSubtle,
-                        borderColor: colors.border,
-                        borderRadius: borderRadius.sm,
-                      },
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        typography.caption,
-                        {
-                          color: currentOrgId === org.orgId ? '#FFFFFF' : colors.textPrimary,
-                          fontWeight: '600',
-                          fontSize: 11,
-                        },
-                      ]}
-                    >
-                      {org.organizationName}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            </View>
-          )}
         </View>
 
-        {/* Setting 1: Switch Active Role */}
-        {/* Role View Status */}
-        <View style={styles.section}>
-          <Text style={[typography.subtitle1, { color: colors.textPrimary, marginBottom: 8 }]}>
-            Active Role View
-          </Text>
-          {isUserAdmin ? (
+        {/* Management Access (Only visible to Managers & Administrators) */}
+        {isManager && (
+          <View style={styles.section}>
+            <Text style={[typography.subtitle1, { color: colors.textPrimary, marginBottom: 8 }]}>
+              Management Access
+            </Text>
             <View style={{ gap: 10 }}>
               <View
                 style={[
@@ -284,7 +233,7 @@ export const ProfileScreen: React.FC<{ navigation?: any }> = ({ navigation }) =>
                     { color: '#FFFFFF', fontWeight: '700' },
                   ]}
                 >
-                  Administrator Access • Locked to Manager View
+                  Supervisor Account • Approvals & Management Access
                 </Text>
               </View>
 
@@ -339,56 +288,8 @@ export const ProfileScreen: React.FC<{ navigation?: any }> = ({ navigation }) =>
                 </View>
               </Pressable>
             </View>
-          ) : (
-            <View style={styles.roleToggleRow}>
-              <Pressable
-                onPress={() => handleRoleToggle('employee')}
-                style={[
-                  styles.roleToggleBtn,
-                  {
-                    backgroundColor:
-                      activeRole === 'employee' ? colors.primary : colors.card,
-                    borderColor: colors.border,
-                    borderRadius: borderRadius.md,
-                  },
-                ]}
-              >
-                <User size={16} color={activeRole === 'employee' ? '#FFFFFF' : colors.textSecondary} />
-                <Text
-                  style={[
-                    typography.subtitle2,
-                    { color: activeRole === 'employee' ? '#FFFFFF' : colors.textPrimary },
-                  ]}
-                >
-                  Employee View
-                </Text>
-              </Pressable>
-
-              <Pressable
-                onPress={() => handleRoleToggle('manager')}
-                style={[
-                  styles.roleToggleBtn,
-                  {
-                    backgroundColor:
-                      activeRole === 'manager' ? colors.primary : colors.card,
-                    borderColor: colors.border,
-                    borderRadius: borderRadius.md,
-                  },
-                ]}
-              >
-                <Shield size={16} color={activeRole === 'manager' ? '#FFFFFF' : colors.textSecondary} />
-                <Text
-                  style={[
-                    typography.subtitle2,
-                    { color: activeRole === 'manager' ? '#FFFFFF' : colors.textPrimary },
-                  ]}
-                >
-                  Manager View
-                </Text>
-              </Pressable>
-            </View>
-          )}
-        </View>
+          </View>
+        )}
 
         {/* Theme Appearance */}
         <View style={styles.section}>
@@ -573,10 +474,6 @@ const styles = StyleSheet.create({
   section: {
     marginBottom: 24,
   },
-  roleToggleRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
   roleToggleBtn: {
     flex: 1,
     flexDirection: 'row',
@@ -632,11 +529,6 @@ const styles = StyleSheet.create({
     minWidth: '45%',
     flex: 1,
     gap: 2,
-  },
-  orgSwitchBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderWidth: 1,
   },
   modalOverlay: {
     flex: 1,

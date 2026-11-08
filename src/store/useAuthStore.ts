@@ -305,6 +305,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         set({ activeRole: 'manager' });
         return;
       }
+      // Regular staff members cannot elevate themselves to manager
+      if (role === 'manager' && current.role !== 'manager') {
+        return;
+      }
       const updated: UserProfile = { ...current, role };
       AsyncStorage.setItem(AUTH_USER_KEY, JSON.stringify(updated));
       set({ user: updated, activeRole: role });
