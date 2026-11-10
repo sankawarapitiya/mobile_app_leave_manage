@@ -33,6 +33,7 @@ import {
 import { useTheme } from '../../theme/ThemeContext';
 import { useAuthStore } from '../../store/useAuthStore';
 import { CustomButton } from '../../components/CustomButton';
+import { LoadingSpinner } from '../../components/LoadingSpinner';
 import { triggerHaptic } from '../../utils/haptics';
 import { OrganizationInfo } from '../../types';
 
@@ -287,7 +288,7 @@ export const LoginScreen: React.FC<{ navigation: any }> = ({ navigation }) => {
                     />
 
                     {isVerifyingOrg ? (
-                      <ActivityIndicator size="small" color={colors.primary} />
+                      <LoadingSpinner size="sm" color={colors.primary} />
                     ) : (
                       <Pressable
                         onPress={() => setShowOrgPicker(!showOrgPicker)}

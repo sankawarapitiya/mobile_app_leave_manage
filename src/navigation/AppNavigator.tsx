@@ -1,38 +1,39 @@
-import React, { useEffect } from 'react';
-import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, StyleSheet } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { useAuthStore } from '../store/useAuthStore';
-import { useTheme } from '../theme/ThemeContext';
 import { AuthNavigator } from './AuthNavigator';
 import { MainTabNavigator } from './MainTabNavigator';
+import { SplashScreen } from '../components/SplashScreen';
 
 export const AppNavigator: React.FC = () => {
-  const { colors } = useTheme();
-  const { isAuthenticated, isLoading, initialize } = useAuthStore();
+  const { isAuthenticated, isLoading, initialize, currentOrgName } = useAuthStore();
+  const [splashFinished, setSplashFinished] = useState(false);
 
   useEffect(() => {
     initialize();
   }, []);
 
-  if (isLoading) {
-    return (
-      <View style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
-        <ActivityIndicator size="large" color={colors.primary} />
-      </View>
-    );
-  }
+  const showSplash = isLoading || !splashFinished;
 
   return (
-    <NavigationContainer>
-      {isAuthenticated ? <MainTabNavigator /> : <AuthNavigator />}
-    </NavigationContainer>
+    <View style={styles.root}>
+      <NavigationContainer>
+        {isAuthenticated ? <MainTabNavigator /> : <AuthNavigator />}
+      </NavigationContainer>
+
+      {showSplash && (
+        <SplashScreen
+          onAnimationComplete={() => setSplashFinished(true)}
+          orgName={currentOrgName || 'Divisional Secretariat Office'}
+        />
+      )}
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
-  loadingContainer: {
+  root: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
 });

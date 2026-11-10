@@ -204,46 +204,80 @@ export const authService = {
 
     try {
       const cleanUserId = String(userId || '').trim();
-      let snap;
-      // If user is a specific employee (numeric or service ID), filter by userId
-      if (cleanUserId && cleanUserId !== 'admin' && !cleanUserId.startsWith('admin_')) {
-        const q = query(
-          collection(db, 'organizations', orgId, 'attendance'),
+      const cleanOrg = String(orgId || DEFAULT_ORG_ID).trim();
+
+      const isAdminOrManager =
+        !cleanUserId ||
+        cleanUserId === 'admin' ||
+        cleanUserId === 'manager' ||
+        cleanUserId.startsWith('admin') ||
+        cleanUserId.startsWith('manager') ||
+        cleanUserId.startsWith('usr_');
+
+      let rawPunches: AttendanceRecord[] = [];
+
+      if (!isAdminOrManager) {
+        let q = query(
+          collection(db, 'organizations', cleanOrg, 'attendance'),
           where('userId', '==', cleanUserId),
           limit(100)
         );
-        snap = await getDocs(q);
+        let snap = await getDocs(q);
+
+        if (snap.empty) {
+          q = query(
+            collection(db, 'organizations', cleanOrg, 'attendance'),
+            where('rawUserId', '==', cleanUserId),
+            limit(100)
+          );
+          snap = await getDocs(q);
+        }
+
+        snap.forEach((d) => {
+          const data = d.data();
+          const punchTime = String(data.punchTime || '');
+          const punchDate = String(data.punchDate || (punchTime ? punchTime.slice(0, 10) : ''));
+          rawPunches.push({
+            id: d.id,
+            userId: String(data.userId || data.rawUserId || cleanUserId),
+            employeeName: data.employeeName || '',
+            department: data.department || 'General',
+            punchTime,
+            punchDate,
+            punchState: data.punchState,
+            punchStateName: data.punchStateName || 'Check-In',
+            verifyName: data.verifyName || 'Biometric',
+          });
+        });
       } else {
-        // Manager/admin view: fetch recent punches across the organization
         const q = query(
-          collection(db, 'organizations', orgId, 'attendance'),
+          collection(db, 'organizations', cleanOrg, 'attendance'),
           limit(150)
         );
-        snap = await getDocs(q);
-      }
+        const snap = await getDocs(q);
 
-      const rawPunches: AttendanceRecord[] = [];
-      snap.forEach((d) => {
-        const data = d.data();
-        const punchTime = data.punchTime || '';
-        const punchDate = data.punchDate || (punchTime ? punchTime.slice(0, 10) : '');
-        rawPunches.push({
-          id: d.id,
-          userId: String(data.userId || cleanUserId),
-          employeeName: data.employeeName || '',
-          department: data.department || 'General',
-          punchTime,
-          punchDate,
-          punchState: data.punchState,
-          punchStateName: data.punchStateName || 'Check-In',
-          verifyName: data.verifyName || 'Biometric',
+        snap.forEach((d) => {
+          const data = d.data();
+          const punchTime = String(data.punchTime || '');
+          const punchDate = String(data.punchDate || (punchTime ? punchTime.slice(0, 10) : ''));
+          rawPunches.push({
+            id: d.id,
+            userId: String(data.userId || data.rawUserId || ''),
+            employeeName: data.employeeName || '',
+            department: data.department || 'General',
+            punchTime,
+            punchDate,
+            punchState: data.punchState,
+            punchStateName: data.punchStateName || 'Check-In',
+            verifyName: data.verifyName || 'Biometric',
+          });
         });
-      });
+      }
 
       // Group by user and date to accurately label First Punch (Check-In) vs Last Punch (Check-Out)
       const userDateGroups: Record<string, AttendanceRecord[]> = {};
       rawPunches.forEach((p) => {
-        const key = `${p.userId}___${p.punchDate}`;
+        const key = `${p.userId || 'USER'}___${p.punchDate}`;
         if (!userDateGroups[key]) userDateGroups[key] = [];
         userDateGroups[key].push(p);
       });
@@ -289,21 +323,32 @@ export const authService = {
       const punches = await authService.fetchRecentPunches(orgId, userId);
       if (!punches || punches.length === 0) return [];
 
-      const byDate: Record<string, AttendanceRecord[]> = {};
+      const cleanUserId = String(userId || '').trim();
+      const isAdminOrManager =
+        !cleanUserId ||
+        cleanUserId === 'admin' ||
+        cleanUserId === 'manager' ||
+        cleanUserId.startsWith('admin') ||
+        cleanUserId.startsWith('manager') ||
+        cleanUserId.startsWith('usr_');
+
+      // Group punches: for single user by date, for admin/manager by date and employee
+      const userDateMap: Record<string, AttendanceRecord[]> = {};
       punches.forEach((p) => {
         const date = p.punchDate || (p.punchTime ? p.punchTime.slice(0, 10) : 'unknown');
-        if (!byDate[date]) byDate[date] = [];
-        byDate[date].push(p);
+        const groupKey = isAdminOrManager ? `${date}___${p.userId || p.employeeName || 'USER'}` : date;
+        if (!userDateMap[groupKey]) userDateMap[groupKey] = [];
+        userDateMap[groupKey].push(p);
       });
 
       const dailySummaries: DailyAttendanceSummary[] = [];
-      const dates = Object.keys(byDate).sort().reverse();
 
-      for (const date of dates) {
-        const dayPunches = byDate[date].sort((a, b) => (a.punchTime || '').localeCompare(b.punchTime || ''));
+      for (const [, dayPunches] of Object.entries(userDateMap)) {
+        dayPunches.sort((a, b) => (a.punchTime || '').localeCompare(b.punchTime || ''));
         const firstPunch = dayPunches[0];
         const lastPunch = dayPunches.length > 1 ? dayPunches[dayPunches.length - 1] : null;
 
+        const date = firstPunch.punchDate || (firstPunch.punchTime ? firstPunch.punchTime.slice(0, 10) : 'unknown');
         const checkInTime = firstPunch.punchTime ? firstPunch.punchTime.slice(11, 19) : '--:--';
         const checkInHourMin = checkInTime.slice(0, 5);
 
@@ -322,40 +367,48 @@ export const authService = {
 
         if (lastPunch && lastPunch.punchTime) {
           checkOutTime = lastPunch.punchTime.slice(11, 19);
-          const t1 = new Date(firstPunch.punchTime.replace(' ', 'T')).getTime();
-          const t2 = new Date(lastPunch.punchTime.replace(' ', 'T')).getTime();
-          if (!isNaN(t1) && !isNaN(t2) && t2 > t1) {
-            workedMinutes = Math.round((t2 - t1) / 60000);
-            const hrs = Math.floor(workedMinutes / 60);
-            const mins = workedMinutes % 60;
-            workedFormatted = `${hrs}h ${mins}m`;
 
-            if (workedMinutes >= 465) {
-              checkOutLabel = 'Full Day';
-              dailyStatus = 'Full Day';
-              if (workedMinutes >= 510) {
-                const otHrs = ((workedMinutes - 465) / 60).toFixed(1);
-                dailyStatus = `Full Day (+${otHrs}H OT)`;
+          // Direct calculation of minutes worked without engine Date quirks
+          const [h1, m1] = checkInTime.split(':').map(Number);
+          const [h2, m2] = checkOutTime.split(':').map(Number);
+          if (!isNaN(h1) && !isNaN(m1) && !isNaN(h2) && !isNaN(m2)) {
+            const startMins = h1 * 60 + m1;
+            const endMins = h2 * 60 + m2;
+            if (endMins > startMins) {
+              workedMinutes = endMins - startMins;
+              const hrs = Math.floor(workedMinutes / 60);
+              const mins = workedMinutes % 60;
+              workedFormatted = `${hrs}h ${mins}m`;
+
+              if (workedMinutes >= 465) {
+                checkOutLabel = 'Full Day';
+                dailyStatus = 'Full Day';
+                if (workedMinutes >= 510) {
+                  const otHrs = ((workedMinutes - 465) / 60).toFixed(1);
+                  dailyStatus = `Full Day (+${otHrs}H OT)`;
+                }
+              } else if (workedMinutes >= 210) {
+                checkOutLabel = 'Half Day';
+                dailyStatus = 'Half Day';
+              } else {
+                checkOutLabel = 'Early Out';
+                dailyStatus = 'Early Out';
               }
-            } else if (workedMinutes >= 210) {
-              checkOutLabel = 'Half Day';
-              dailyStatus = 'Half Day';
-            } else {
-              checkOutLabel = 'Early Out';
-              dailyStatus = 'Early Out';
             }
           }
         } else {
           dailyStatus = 'Single Punch (Check-In Only)';
         }
 
-        const dateObj = new Date(date + 'T00:00:00');
-        const dayName = !isNaN(dateObj.getTime())
-          ? dateObj.toLocaleDateString('en-US', { weekday: 'short' })
-          : '';
+        const dateParts = date.split('-').map(Number);
+        let dayName = '';
+        if (dateParts.length === 3) {
+          const dObj = new Date(dateParts[0], dateParts[1] - 1, dateParts[2]);
+          dayName = dObj.toLocaleDateString('en-US', { weekday: 'short' });
+        }
 
         dailySummaries.push({
-          id: `${date}_${firstPunch.userId}`,
+          id: `${date}_${firstPunch.userId}_${firstPunch.id}`,
           date,
           dayName,
           userId: firstPunch.userId,
@@ -373,7 +426,12 @@ export const authService = {
         });
       }
 
-      return dailySummaries;
+      // Sort: newest date first, then latest checkInTime
+      return dailySummaries.sort((a, b) => {
+        const dComp = (b.date || '').localeCompare(a.date || '');
+        if (dComp !== 0) return dComp;
+        return (b.checkInTime || '').localeCompare(a.checkInTime || '');
+      });
     } catch (err) {
       console.warn('[Firestore] fetchDailyAttendanceSummary error:', err);
       return [];

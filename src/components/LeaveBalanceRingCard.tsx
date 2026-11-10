@@ -76,119 +76,117 @@ export const LeaveBalanceRingCard: React.FC<LeaveBalanceRingCardProps> = ({
         },
       ]}
     >
-      <View style={styles.content}>
-        {/* Left Side: Numbers and Details */}
-        <View style={styles.infoCol}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Text
-              style={[
-                typography.caption,
-                styles.categoryTitle,
-                { color: accentColor },
-              ]}
-              numberOfLines={1}
-            >
-              {title}
-            </Text>
-            {code ? (
-              <View
-                style={[
-                  styles.codeBadge,
-                  { backgroundColor: accentColor + '20', borderRadius: borderRadius.xs },
-                ]}
-              >
-                <Text style={[typography.caption, { color: accentColor, fontSize: 9, fontWeight: '700' }]}>
-                  {code}
-                </Text>
-              </View>
-            ) : null}
-          </View>
-          <View style={styles.daysRow}>
-            <Text style={[typography.kpiNumber, { color: colors.textPrimary }]}>
-              {total > 0 ? available : used}
-            </Text>
-            <Text style={[typography.body2, { color: colors.textSecondary, marginBottom: 2 }]}>
-              {total > 0 ? `/ ${total} days` : 'days used'}
-            </Text>
-          </View>
-          <View style={styles.breakdownRow}>
-            {total > 0 ? (
-              <View style={styles.statPill}>
-                <View style={[styles.dot, { backgroundColor: colors.textTertiary }]} />
-                <Text style={[typography.caption, { color: colors.textSecondary }]}>
-                  {used} used
-                </Text>
-              </View>
-            ) : (
-              <View style={styles.statPill}>
-                <View style={[styles.dot, { backgroundColor: accentColor }]} />
-                <Text style={[typography.caption, { color: colors.textSecondary }]}>
-                  No Quota Limit
-                </Text>
-              </View>
-            )}
-            {pending > 0 && (
-              <View style={styles.statPill}>
-                <View style={[styles.dot, { backgroundColor: colors.warning }]} />
-                <Text style={[typography.caption, { color: colors.warning }]}>
-                  {pending} pend
-                </Text>
-              </View>
-            )}
-          </View>
-        </View>
-
-        {/* Right Side: Circular Ring */}
-        <View style={styles.ringContainer}>
-          <View style={{ width: size, height: size, transform: [{ rotate: '-90deg' }] }}>
-            <Svg width={size} height={size}>
-              {/* Background Track */}
+      {/* Backward Donut Ring Layer - Layered Backward to Text */}
+      <View style={styles.ringContainerBackward} pointerEvents="none">
+        <View style={{ width: size, height: size, transform: [{ rotate: '-90deg' }] }}>
+          <Svg width={size} height={size}>
+            {/* Background Track */}
+            <Circle
+              cx={size / 2}
+              cy={size / 2}
+              r={radius}
+              stroke={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}
+              strokeWidth={strokeWidth}
+              fill="transparent"
+            />
+            {/* Progress Ring */}
+            {Platform.OS === 'web' ? (
               <Circle
                 cx={size / 2}
                 cy={size / 2}
                 r={radius}
-                stroke={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}
+                stroke={accentColor}
                 strokeWidth={strokeWidth}
+                strokeDasharray={`${circumference} ${circumference}`}
+                strokeDashoffset={circumference * (1 - ratio)}
+                strokeLinecap="round"
                 fill="transparent"
               />
-              {/* Progress Ring */}
-              {Platform.OS === 'web' ? (
-                <Circle
-                  cx={size / 2}
-                  cy={size / 2}
-                  r={radius}
-                  stroke={accentColor}
-                  strokeWidth={strokeWidth}
-                  strokeDasharray={`${circumference} ${circumference}`}
-                  strokeDashoffset={circumference * (1 - ratio)}
-                  strokeLinecap="round"
-                  fill="transparent"
-                />
-              ) : (
-                <AnimatedCircle
-                  cx={size / 2}
-                  cy={size / 2}
-                  r={radius}
-                  stroke={accentColor}
-                  strokeWidth={strokeWidth}
-                  strokeDasharray={`${circumference} ${circumference}`}
-                  animatedProps={animatedProps}
-                  strokeLinecap="round"
-                  fill="transparent"
-                />
-              )}
-            </Svg>
-          </View>
-          <View style={styles.ringCenterText}>
-            <Text
+            ) : (
+              <AnimatedCircle
+                cx={size / 2}
+                cy={size / 2}
+                r={radius}
+                stroke={accentColor}
+                strokeWidth={strokeWidth}
+                strokeDasharray={`${circumference} ${circumference}`}
+                animatedProps={animatedProps}
+                strokeLinecap="round"
+                fill="transparent"
+              />
+            )}
+          </Svg>
+        </View>
+        <View style={styles.ringCenterText}>
+          <Text
+            style={[
+              typography.caption,
+              { color: colors.textPrimary, fontWeight: '700', fontSize: total > 0 ? 12 : 10, opacity: 0.8 },
+            ]}
+          >
+            {total > 0 ? `${percentage}%` : 'Free'}
+          </Text>
+        </View>
+      </View>
+
+      {/* Foreground Content: Numbers and Details Layered Forward */}
+      <View style={styles.infoCol}>
+        <View style={styles.titleRow}>
+          <Text
+            style={[
+              typography.caption,
+              styles.categoryTitle,
+              { color: accentColor },
+            ]}
+            numberOfLines={1}
+          >
+            {title}
+          </Text>
+          {code ? (
+            <View
               style={[
-                typography.caption,
-                { color: colors.textPrimary, fontWeight: '700', fontSize: total > 0 ? 13 : 11 },
+                styles.codeBadge,
+                { backgroundColor: accentColor + '20', borderRadius: borderRadius.xs },
               ]}
             >
-              {total > 0 ? `${percentage}%` : 'Free'}
-            </Text>
-          </View>
+              <Text style={[typography.caption, { color: accentColor, fontSize: 9, fontWeight: '700' }]}>
+                {code}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+        <View style={styles.daysRow}>
+          <Text style={[typography.kpiNumber, { color: colors.textPrimary }]}>
+            {total > 0 ? available : used}
+          </Text>
+          <Text style={[typography.body2, { color: colors.textSecondary, marginBottom: 2 }]}>
+            {total > 0 ? `/ ${total} days` : 'days used'}
+          </Text>
+        </View>
+        <View style={styles.breakdownRow}>
+          {total > 0 ? (
+            <View style={styles.statPill}>
+              <View style={[styles.dot, { backgroundColor: colors.textTertiary }]} />
+              <Text style={[typography.caption, { color: colors.textSecondary }]}>
+                {used} used
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.statPill}>
+              <View style={[styles.dot, { backgroundColor: accentColor }]} />
+              <Text style={[typography.caption, { color: colors.textSecondary }]}>
+                No Quota Limit
+              </Text>
+            </View>
+          )}
+          {pending > 0 && (
+            <View style={styles.statPill}>
+              <View style={[styles.dot, { backgroundColor: colors.warning }]} />
+              <Text style={[typography.caption, { color: colors.warning }]}>
+                {pending} pend
+              </Text>
+            </View>
+          )}
         </View>
       </View>
     </View>
@@ -201,15 +199,40 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     flex: 1,
     minWidth: 155,
+    minHeight: 104,
+    position: 'relative',
+    overflow: 'hidden',
+    justifyContent: 'center',
   },
-  content: {
-    flexDirection: 'row',
+  ringContainerBackward: {
+    position: 'absolute',
+    right: 8,
+    top: '50%',
+    marginTop: -38,
+    width: 76,
+    height: 76,
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
+    zIndex: 0,
+    elevation: 0,
+  },
+  ringCenterText: {
+    ...StyleSheet.absoluteFill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1,
   },
   infoCol: {
-    flex: 1,
+    position: 'relative',
+    zIndex: 2,
+    elevation: 2,
     justifyContent: 'center',
+    paddingRight: 32,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   categoryTitle: {
     textTransform: 'uppercase',
@@ -243,17 +266,5 @@ const styles = StyleSheet.create({
     width: 5,
     height: 5,
     borderRadius: 2.5,
-  },
-  ringContainer: {
-    width: 76,
-    height: 76,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 8,
-  },
-  ringCenterText: {
-    ...StyleSheet.absoluteFill,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
 });

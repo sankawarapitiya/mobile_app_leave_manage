@@ -486,9 +486,10 @@ export const DashboardScreen: React.FC<{ navigation: any }> = ({ navigation }) =
               {attendanceViewMode === 'daily' ? (
                 dailyAttendance && dailyAttendance.length > 0 ? (
                   <View style={{ gap: 10 }}>
-                    {dailyAttendance.slice(0, 5).map((day) => {
-                      const isFullDay = day.dailyStatus.includes('Full Day');
-                      const isGrace = day.dailyStatus.includes('Grace');
+                    {dailyAttendance.slice(0, 10).map((day) => {
+                      const statusStr = String(day.dailyStatus || '');
+                      const isFullDay = statusStr.includes('Full Day');
+                      const isGrace = statusStr.includes('Grace');
                       const isSingle = day.punchCount === 1;
 
                       const statusBg = isFullDay ? colors.successBg : isGrace ? colors.warningBg : colors.surfaceSubtle;
@@ -507,16 +508,29 @@ export const DashboardScreen: React.FC<{ navigation: any }> = ({ navigation }) =
                             },
                           ]}
                         >
-                          {/* Card Header: Date & Overall Daily Status */}
+                          {/* Card Header: Employee Name, Date & Overall Daily Status */}
                           <View style={styles.dailyCardHeader}>
-                            <View style={styles.dailyDatePill}>
-                              <CalendarDays size={14} color={colors.primary} />
-                              <Text style={[typography.subtitle2, { color: colors.textPrimary, fontWeight: '700' }]}>
-                                {day.date}
-                              </Text>
-                              <Text style={[typography.caption, { color: colors.textSecondary, fontWeight: '600' }]}>
-                                • {day.dayName}
-                              </Text>
+                            <View style={{ flexDirection: 'column', gap: 2, flex: 1, marginRight: 8 }}>
+                              {Boolean(day.employeeName) && (
+                                <Text
+                                  style={[
+                                    typography.subtitle2,
+                                    { color: colors.textPrimary, fontWeight: '800', fontSize: 13 },
+                                  ]}
+                                  numberOfLines={1}
+                                >
+                                  {day.employeeName}
+                                </Text>
+                              )}
+                              <View style={styles.dailyDatePill}>
+                                <CalendarDays size={13} color={colors.primary} />
+                                <Text style={[typography.caption, { color: colors.textSecondary, fontWeight: '700' }]}>
+                                  {day.date}
+                                </Text>
+                                <Text style={[typography.caption, { color: colors.textTertiary, fontWeight: '600' }]}>
+                                  • {day.dayName}
+                                </Text>
+                              </View>
                             </View>
 
                             <View

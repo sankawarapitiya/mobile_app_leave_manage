@@ -151,22 +151,28 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   loadRecentPunches: async () => {
     const user = get().user;
-    const orgId = get().currentOrgId;
     if (!user) return;
+    const orgId = get().currentOrgId || user.orgId || DEFAULT_ORG_ID;
 
     try {
+      const isRoleAdmin =
+        user.role === 'manager' ||
+        (user.designation || '').toLowerCase().includes('admin') ||
+        (user.designation || '').toLowerCase().includes('manager');
+
       const userId =
         user.fingerprintId ||
         user.fingerprint_id ||
         user.rawUserId ||
-        user.uid.replace('emp_', '');
+        (isRoleAdmin ? 'admin' : user.uid.replace('emp_', ''));
+
       const [punches, dailySummaries] = await Promise.all([
         authService.fetchRecentPunches(orgId, userId),
         authService.fetchDailyAttendanceSummary(orgId, userId),
       ]);
       set({ recentPunches: punches, dailyAttendance: dailySummaries });
-    } catch {
-      // Ignore
+    } catch (err) {
+      console.warn('[useAuthStore] loadRecentPunches error:', err);
     }
   },
 
@@ -177,6 +183,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       orgId;
     await AsyncStorage.setItem(ORG_KEY, orgId);
     set({ currentOrgId: orgId, currentOrgName: name });
+    get().loadRecentPunches();
   },
 
   verifyOrg: async (orgId: string) => {

@@ -28,6 +28,7 @@ import {
 import { useTheme } from '../../theme/ThemeContext';
 import { useAuthStore } from '../../store/useAuthStore';
 import { CustomButton } from '../../components/CustomButton';
+import { LoadingSpinner } from '../../components/LoadingSpinner';
 import { triggerHaptic } from '../../utils/haptics';
 import { UserRole } from '../../types';
 
@@ -344,7 +345,7 @@ export const RegisterScreen: React.FC<{ navigation: any }> = ({ navigation }) =>
                     autoCapitalize="none"
                     style={[styles.textInput, { color: colors.textPrimary, fontWeight: '700' }]}
                   />
-                  {isSearchingTerminal && <ActivityIndicator size="small" color={colors.primary} />}
+                  {isSearchingTerminal && <LoadingSpinner size="sm" color={colors.primary} />}
                 </View>
               )}
             />

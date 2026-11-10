@@ -2,7 +2,6 @@ import React from 'react';
 import {
   Text,
   StyleSheet,
-  ActivityIndicator,
   Pressable,
   ViewStyle,
   TextStyle,
@@ -16,6 +15,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useTheme } from '../theme/ThemeContext';
 import { triggerHaptic } from '../utils/haptics';
+import { LoadingSpinner } from './LoadingSpinner';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -89,7 +89,7 @@ export const CustomButton: React.FC<CustomButtonProps> = ({
   const buttonContent = (
     <>
       {loading ? (
-        <ActivityIndicator size="small" color={getTextColor()} />
+        <LoadingSpinner size="sm" color={getTextColor()} />
       ) : (
         <>
           {icon}
