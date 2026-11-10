@@ -66,6 +66,12 @@ export const DashboardScreen: React.FC<{ navigation: any }> = ({ navigation }) =
     if (!user) return;
 
     setLoading(true);
+
+    // Smooth loading safety timer (max 2.5s fallback)
+    const safetyTimer = setTimeout(() => {
+      setLoading(false);
+    }, 2500);
+
     // Subscribe to Balances (resolving cloud leave balances via fingerprintId / rawUserId / uid)
     const fpId = user.fingerprintId || user.fingerprint_id || user.rawUserId;
     const unsubBalances = leaveService.subscribeToUserBalances(
@@ -98,6 +104,7 @@ export const DashboardScreen: React.FC<{ navigation: any }> = ({ navigation }) =
     loadRecentPunches();
 
     return () => {
+      clearTimeout(safetyTimer);
       unsubBalances();
       unsubRequests();
       unsubHolidays();
@@ -511,7 +518,7 @@ export const DashboardScreen: React.FC<{ navigation: any }> = ({ navigation }) =
                           {/* Card Header: Employee Name, Date & Overall Daily Status */}
                           <View style={styles.dailyCardHeader}>
                             <View style={{ flexDirection: 'column', gap: 2, flex: 1, marginRight: 8 }}>
-                              {Boolean(day.employeeName) && (
+                              {Boolean(day.employeeName || day.userId) && (
                                 <Text
                                   style={[
                                     typography.subtitle2,
@@ -519,7 +526,7 @@ export const DashboardScreen: React.FC<{ navigation: any }> = ({ navigation }) =
                                   ]}
                                   numberOfLines={1}
                                 >
-                                  {day.employeeName}
+                                  {day.employeeName || (day.userId ? `Employee #${day.userId}` : 'Employee')}
                                 </Text>
                               )}
                               <View style={styles.dailyDatePill}>
@@ -774,7 +781,7 @@ export const DashboardScreen: React.FC<{ navigation: any }> = ({ navigation }) =
                               ]}
                               numberOfLines={1}
                             >
-                              {punch.employeeName || user?.fullName || 'Employee'}
+                              {punch.employeeName || (punch.userId ? `Employee #${punch.userId}` : user?.fullName || 'Employee')}
                             </Text>
                             <Text style={[typography.caption, { color: colors.textSecondary }]}>
                               {punch.department || user?.department || 'General'}

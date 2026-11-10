@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, StyleSheet, Dimensions } from 'react-native';
 import Animated, {
   useSharedValue,
@@ -19,11 +19,13 @@ const { width } = Dimensions.get('window');
 interface SplashScreenProps {
   onAnimationComplete?: () => void;
   orgName?: string;
+  isReady?: boolean;
 }
 
 export const SplashScreen: React.FC<SplashScreenProps> = ({
   onAnimationComplete,
   orgName = 'Divisional Secretariat Office',
+  isReady = true,
 }) => {
   const { colors, typography, isDark } = useTheme();
 
@@ -33,6 +35,10 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
   const textTranslateY = useSharedValue(25);
   const textOpacity = useSharedValue(0);
   const containerOpacity = useSharedValue(1);
+
+  const [minTimeElapsed, setMinTimeElapsed] = useState(false);
+  const [statusMessage, setStatusMessage] = useState('Starting secure partition...');
+  const exitTriggered = useRef(false);
 
   useEffect(() => {
     // 1. Spring-in for main emblem
@@ -59,17 +65,47 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
     });
     textOpacity.value = withTiming(1, { duration: 800 });
 
-    // 4. Smooth completion timer (min 1.8s presentation)
+    // 4. Staged status messages for smooth loading feedback
+    const msgTimer1 = setTimeout(() => {
+      setStatusMessage('Syncing biometric cloud...');
+    }, 900);
+
+    // 5. Minimum presentation time (1800ms) before allowing handover
     const timer = setTimeout(() => {
-      containerOpacity.value = withTiming(0, { duration: 400 }, (finished) => {
+      setMinTimeElapsed(true);
+    }, 1800);
+
+    // 6. Hard safety timeout (4500ms): force smooth exit even if network stalls
+    const hardTimeout = setTimeout(() => {
+      if (!exitTriggered.current) {
+        exitTriggered.current = true;
+        containerOpacity.value = withTiming(0, { duration: 420 }, (finished) => {
+          if (finished && onAnimationComplete) {
+            runOnJS(onAnimationComplete)();
+          }
+        });
+      }
+    }, 4500);
+
+    return () => {
+      clearTimeout(msgTimer1);
+      clearTimeout(timer);
+      clearTimeout(hardTimeout);
+    };
+  }, []);
+
+  // Graceful exit handover when both minimum animation time has elapsed and app is ready
+  useEffect(() => {
+    if (minTimeElapsed && isReady && !exitTriggered.current) {
+      exitTriggered.current = true;
+      setStatusMessage('Ready');
+      containerOpacity.value = withTiming(0, { duration: 420 }, (finished) => {
         if (finished && onAnimationComplete) {
           runOnJS(onAnimationComplete)();
         }
       });
-    }, 2000);
-
-    return () => clearTimeout(timer);
-  }, []);
+    }
+  }, [minTimeElapsed, isReady]);
 
   const animatedIconStyle = useAnimatedStyle(() => ({
     transform: [{ scale: iconScale.value }],
@@ -204,7 +240,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
         <LoadingSpinner
           size="md"
           color={colors.primary}
-          label="Starting secure partition..."
+          label={statusMessage}
         />
       </Animated.View>
     </Animated.View>

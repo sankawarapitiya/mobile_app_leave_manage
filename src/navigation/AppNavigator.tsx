@@ -14,16 +14,15 @@ export const AppNavigator: React.FC = () => {
     initialize();
   }, []);
 
-  const showSplash = isLoading || !splashFinished;
-
   return (
     <View style={styles.root}>
       <NavigationContainer>
         {isAuthenticated ? <MainTabNavigator /> : <AuthNavigator />}
       </NavigationContainer>
 
-      {showSplash && (
+      {!splashFinished && (
         <SplashScreen
+          isReady={!isLoading}
           onAnimationComplete={() => setSplashFinished(true)}
           orgName={currentOrgName || 'Divisional Secretariat Office'}
         />
